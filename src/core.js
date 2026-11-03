@@ -201,6 +201,33 @@ const Core = (() => {
     }
     return out;
   }
+  /* Nitidez para redes: refuerza los bordes y deja quietas las zonas lisas, que son las que la compresión pixela. */
+  function edgeSharpen(src, w, h, amount) {
+    const n = w * h, Y = new Float32Array(n), T = new Float32Array(n), B = new Float32Array(n);
+    for (let i = 0, k = 0; i < n; i++, k += 4) Y[i] = 0.2126 * src[k] + 0.7152 * src[k + 1] + 0.0722 * src[k + 2];
+    for (let y = 0; y < h; y++) {
+      const r = y * w;
+      for (let x = 0; x < w; x++) T[r + x] = (Y[r + (x > 0 ? x - 1 : 0)] + 2 * Y[r + x] + Y[r + (x < w - 1 ? x + 1 : x)]) * 0.25;
+    }
+    for (let y = 0; y < h; y++) {
+      const r = y * w, u = y > 0 ? r - w : r, d = y < h - 1 ? r + w : r;
+      for (let x = 0; x < w; x++) B[r + x] = (T[u + x] + 2 * T[r + x] + T[d + x]) * 0.25;
+    }
+    const out = new Uint8ClampedArray(src.length);
+    for (let y = 0; y < h; y++) {
+      const r = y * w, u = y > 0 ? r - w : r, d = y < h - 1 ? r + w : r;
+      for (let x = 0; x < w; x++) {
+        const i = r + x, k = i * 4, lf = x > 0 ? i - 1 : i, rt = x < w - 1 ? i + 1 : i;
+        const gx = Math.abs(B[rt] - B[lf]), gy = Math.abs(B[d + x] - B[u + x]);
+        let t = ((gx > gy ? gx : gy) - 4) / 14;
+        t = t < 0 ? 0 : t > 1 ? 1 : t;
+        let add = (Y[i] - B[i]) * amount * t * t * (3 - 2 * t);
+        add = add > 28 ? 28 : add < -28 ? -28 : add;
+        out[k] = src[k] + add; out[k + 1] = src[k + 1] + add; out[k + 2] = src[k + 2] + add; out[k + 3] = src[k + 3];
+      }
+    }
+    return out;
+  }
   /* Une la reconstrucción con el detalle real para que no se vea pintada. */
   function fuseImages(ai, base, mix) {
     const out = new Uint8ClampedArray(ai.length);
@@ -217,7 +244,8 @@ const Core = (() => {
     const t = targetDims(w, h, mode), long = Math.max(w, h);
     if (mode === 'original') return { ...t, kind: 'none', input: 1, mix: 0, cas: 0 };
     if (mode === 'detail') return { ...t, kind: 'fusion', input: long > 2400 ? 2400 / long : 1, mix: 0.6, cas: 0.5 };
-    if (long >= t.long) return { ...t, kind: 'resize', input: 1, mix: 0, cas: SOCIAL_MODES.has(mode) ? 0.25 : 0.45 };
+    if (SOCIAL_MODES.has(mode) && long >= t.long) return { ...t, kind: 'resize', input: 1, mix: 0, cas: 0, edge: mode === 'whatsapp' ? 1.8 : 2.2 };
+    if (long >= t.long) return { ...t, kind: 'resize', input: 1, mix: 0, cas: 0.45 };
     return { ...t, kind: 'rebuild', input: 1, mix: 0.82, cas: 0.4 };
   }
 
@@ -898,7 +926,7 @@ const Core = (() => {
   const fmtTime = (s) => { if (!Number.isFinite(s)) return '—'; if (s < 60) return `${Math.max(1, Math.round(s))} s`; const m = Math.floor(s / 60); return m >= 60 ? `${Math.floor(m / 60)} h ${m % 60} min` : `${m} min ${Math.round(s % 60)} s`; };
 
   return {
-    clamp, lerp, clone, defaultParams, colorIsIdentity, effectiveParams, autoAdjust, diagnose, casSharpen, fuseImages, qualityPlan, geoIsIdentity, targetDims, frameSize, geoOutputSize, geoMatrix, IDENTITY_XF, applyXf, curveToTable,
+    clamp, lerp, clone, defaultParams, colorIsIdentity, effectiveParams, autoAdjust, diagnose, casSharpen, edgeSharpen, fuseImages, qualityPlan, geoIsIdentity, targetDims, frameSize, geoOutputSize, geoMatrix, IDENTITY_XF, applyXf, curveToTable,
     haldToCube, parseCube, lutTetra, parseXmp, lanczosKernel, lanczosRegion, lanczosResize, planTiles, destRegion, blendTile, resolveAccum,
     analyzePixels, classifyScene, rankPresets, computeSkinMask, computeSkyMask, rgbToHsv, readExif, findApp1, prepareExif, insertApp1, crc32, makeZip,
     SOCIAL_MODES, slugify, presetSlug, exportName, fmtBytes, fmtTime, CAT_LABEL, sectionIsDefault,

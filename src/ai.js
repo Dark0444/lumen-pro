@@ -45,7 +45,7 @@ function workerBody() {
         const out = Core.lanczosResize(m.rgba, m.w, m.h, m.dw, m.dh, 4);
         reply(m.id, { rgba: out }, [out.buffer]);
       } else if (m.type === 'sharpen') {
-        const out = Core.casSharpen(m.rgba, m.w, m.h, m.amount);
+        const out = m.edge ? Core.edgeSharpen(m.rgba, m.w, m.h, m.edge) : Core.casSharpen(m.rgba, m.w, m.h, m.amount);
         reply(m.id, { rgba: out }, [out.buffer]);
       } else if (m.type === 'fuse') {
         const out = Core.fuseImages(m.ai, m.base, m.mix);
@@ -133,9 +133,9 @@ const lanczosWorker = async (rgba, w, h, dw, dh) => {
   const copy = new Uint8ClampedArray(rgba);
   return (await classicPool.call({ type: 'resize', rgba: copy, w, h, dw, dh }, [copy.buffer])).rgba;
 };
-const sharpenWorker = async (rgba, w, h, amount) => {
+const sharpenWorker = async (rgba, w, h, amount, edge) => {
   const copy = new Uint8ClampedArray(rgba);
-  return (await classicPool.call({ type: 'sharpen', rgba: copy, w, h, amount }, [copy.buffer])).rgba;
+  return (await classicPool.call({ type: 'sharpen', rgba: copy, w, h, amount, edge }, [copy.buffer])).rgba;
 };
 const fuseWorker = async (ai, base, mix) => {
   const a = new Uint8ClampedArray(ai), b = new Uint8ClampedArray(base);

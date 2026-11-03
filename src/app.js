@@ -1333,11 +1333,11 @@ async function renderFinal(params, opt = {}) {
 }
 /* Nitidez de salida: se aplica al final para que el resultado quede limpio y sin halos */
 async function finishSharp(canvas) {
-  const amount = S.enh && S.enh.cas;
-  if (!amount) return canvas;
+  const amount = S.enh && S.enh.cas, edge = S.enh && S.enh.edge;
+  if (!amount && !edge) return canvas;
   const x = canvas.getContext('2d', { willReadFrequently: true });
   const data = x.getImageData(0, 0, canvas.width, canvas.height);
-  const out = await sharpenWorker(data.data, canvas.width, canvas.height, amount);
+  const out = await sharpenWorker(data.data, canvas.width, canvas.height, amount, edge);
   x.putImageData(new ImageData(out, canvas.width, canvas.height), 0, 0);
   return canvas;
 }
@@ -1374,7 +1374,7 @@ const QUALITY_OPTS = [
 ];
 function planText(plan, w, h, mode) {
   if (plan.kind === 'none') return 'Se conserva la resolución que subiste.';
-  if (plan.kind === 'resize' && mode && Core.SOCIAL_MODES.has(mode)) return `La dejo en ${plan.w}×${plan.h} con una nitidez suave, para que esa app tenga que reducirla lo menos posible. Tarda unos segundos.`;
+  if (plan.kind === 'resize' && mode && Core.SOCIAL_MODES.has(mode)) return `La dejo en ${plan.w}×${plan.h} y refuerzo sus bordes para que siga nítida después de la compresión de esa app. Tarda unos segundos.`;
   if (plan.kind === 'resize') return `Tu foto mide ${w}×${h} px y ya tiene la resolución necesaria. La llevo a ${plan.w}×${plan.h} con nitidez limpia en pocos segundos.`;
   if (plan.kind === 'fusion') return `Combino tu foto de ${w}×${h} px con reconstrucción de detalle. Se quita el ruido y se conserva la textura real. Puede tardar hasta 2 minutos.`;
   return `Tu foto mide ${w}×${h} px. Reconstruyo el detalle hasta ${plan.w}×${plan.h} con la IA incluida en la app. Puede tardar hasta 2 minutos.`;
@@ -1521,12 +1521,13 @@ async function applyEnhance(ui, status) {
     const left = await neutralCrop();
     const w = left.width, h = left.height, plan = Core.qualityPlan(w, h, ui.mode);
     S.enh.left = left;
-    let result = null, label = 'Sin cambios', cas = 0;
+    let result = null, label = 'Sin cambios', cas = 0, edge = 0;
     if (plan.kind === 'resize') {
       prog(0.3, `Reescalando a ${plan.w}×${plan.h}…`);
       result = await canvasToBitmap(await lanczosWorker(getRGBA(left), w, h, plan.w, plan.h), plan.w, plan.h);
       label = Core.SOCIAL_MODES.has(ui.mode) ? `Lista para ${QUALITY_OPTS.find(([id]) => id === ui.mode)[1]}` : 'Reescalado de alta calidad';
       cas = plan.cas;
+      edge = plan.edge || 0;
     } else if (plan.kind !== 'none') {
       try {
         const r = await rebuildDetail(left, plan, signal, prog);
@@ -1543,7 +1544,7 @@ async function applyEnhance(ui, status) {
       }
     }
     if (S.enh.src) S.enh.src.close();
-    S.enh = { mode: ui.mode, engine: 'local', src: result, w: plan.w, h: plan.h, label, left, cas, id: Date.now(), geoKey: JSON.stringify(S.params.geo) };
+    S.enh = { mode: ui.mode, engine: 'local', src: result, w: plan.w, h: plan.h, label, left, cas, edge, id: Date.now(), geoKey: JSON.stringify(S.params.geo) };
     S.finalC = null;
     prog(1, 'Aplicando tu look y tus ajustes…');
     await nextFrame();

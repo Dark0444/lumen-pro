@@ -267,10 +267,19 @@ test('redes: tamaños justos y sin IA si la foto alcanza', () => {
   for (const m of ['whatsapp', 'instagram', 'perfil']) {
     const p = Core.qualityPlan(4000, 3000, m);
     assert.equal(p.kind, 'resize');
-    assert.ok(p.cas < 0.45);
+    assert.ok(p.edge > 1);
   }
   assert.equal(Core.qualityPlan(800, 600, 'whatsapp').kind, 'rebuild');
   assert.equal(Core.exportName('a.jpg', 'Clean', 'instagram', 'jpg').endsWith('_instagram.jpg'), true);
+});
+test('nitidez para redes: refuerza bordes y respeta zonas lisas', () => {
+  const W = 40, H = 20, a = new Uint8ClampedArray(W * H * 4);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { const k = (y * W + x) * 4, v = x < 20 ? 60 : 180; a[k] = a[k + 1] = a[k + 2] = v + (x % 2); a[k + 3] = 255; }
+  const o = Core.edgeSharpen(a, W, H, 2.2);
+  for (let k = (10 * W + 5) * 4, i = 0; i < 3; i++) assert.equal(o[k + i], a[k + i]);
+  assert.ok(o[(10 * W + 20) * 4] > a[(10 * W + 20) * 4]);
+  assert.ok(o[(10 * W + 19) * 4] < a[(10 * W + 19) * 4]);
+  assert.equal(o[3], 255);
 });
 test('nombre de archivo automático', () => {
   assert.equal(Core.exportName('Foto Playa.JPG', 'Kodak Portra 400', '4k', 'jpg'), 'foto-playa_portra400_4k.jpg');
