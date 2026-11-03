@@ -1,0 +1,56 @@
+name: Preparar motor local
+
+# Junta ONNX Runtime, los modelos y las librerías que la app lleva dentro del APK.
+# Se publica una sola vez en una release y las compilaciones la reutilizan.
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths: [ '.github/workflows/vendor.yml' ]
+
+permissions:
+  contents: write
+
+jobs:
+  vendor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '20'
+      - name: Descargar y empaquetar
+        run: |
+          set -e
+          mkdir -p v/ort v/models v/mediapipe/wasm v/heic extra
+          npm pack onnxruntime-web@1.23.2 --silent
+          tar xzf onnxruntime-web-1.23.2.tgz
+          cp package/dist/ort.webgpu.min.js package/dist/ort-wasm-simd-threaded.jsep.mjs package/dist/ort-wasm-simd-threaded.jsep.wasm v/ort/
+          cp package/LICENSE v/ort/ 2>/dev/null || true
+          rm -rf package
+          npm pack @mediapipe/tasks-vision@0.10.14 --silent
+          tar xzf mediapipe-tasks-vision-0.10.14.tgz
+          cp package/vision_bundle.mjs v/mediapipe/
+          cp package/wasm/vision_wasm_internal.js package/wasm/vision_wasm_internal.wasm package/wasm/vision_wasm_nosimd_internal.js package/wasm/vision_wasm_nosimd_internal.wasm v/mediapipe/wasm/
+          rm -rf package
+          npm pack heic2any@0.0.4 --silent
+          tar xzf heic2any-0.0.4.tgz
+          cp package/dist/heic2any.min.js v/heic/
+          rm -rf package
+          HF=https://huggingface.co/relax123666/clearpic-models/resolve/main
+          curl -fsSL --retry 3 -o v/models/realesr-general-x4v3.onnx $HF/realesr-general-x4v3.onnx
+          curl -fsSL --retry 3 -o extra/RealESRGAN_x4plus.onnx $HF/RealESRGAN_x4plus.onnx
+          G=https://storage.googleapis.com/mediapipe-models
+          curl -fsSL --retry 3 -o v/models/blaze_face_short_range.tflite $G/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite
+          curl -fsSL --retry 3 -o v/models/selfie_multiclass_256x256.tflite $G/image_segmenter/selfie_multiclass_256x256/float32/latest/selfie_multiclass_256x256.tflite
+          (cd v && find . -type f -exec sha256sum {} + | sort -k2) | tee SHA256SUMS.txt
+          sha256sum extra/RealESRGAN_x4plus.onnx | tee -a SHA256SUMS.txt
+          du -ah v | sort -h | tail -15
+          tar cf vendor.tar -C v .
+      - name: Publicar
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release delete vendor-v1 --cleanup-tag -y || true
+          gh release create vendor-v1 vendor.tar SHA256SUMS.txt extra/RealESRGAN_x4plus.onnx --title "Motor local" --notes "Archivos que se empaquetan en el APK. BSD-3 (Real-ESRGAN), MIT (ONNX Runtime, heic2any), Apache-2.0 (MediaPipe)." --prerelease
