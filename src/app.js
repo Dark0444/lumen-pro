@@ -156,9 +156,7 @@ async function loadFile(file, restore) {
     S.vi = 0;
     Object.assign(S, { file, name: file.name || 'foto', bytes: file.size, exif0: exif, compare: new Set(), split: null, showMask: 0, mode: 'looks', tab: 'auto', zoom: 1, panX: 0, panY: 0, intensityById: {}, filter: 'todos', query: '', announce: null });
     S.params = restore ? { ...Core.defaultParams(), ...restore } : Core.defaultParams();
-    const hadAuto = !!(restore && restore.auto && restore.auto.amount === 0);
     applyBase(bmp, file, false);
-    if (hadAuto) S.params.auto.amount = 0;
     S.hist = []; S.histI = -1; commit();
     S.announce = `${S.autoInfo.title}`;
     go('editar');
@@ -262,7 +260,7 @@ function settleScene() {
   S.recById = Object.fromEntries(S.rank.map((r) => [r.id, r]));
   const a = Core.autoAdjust(S.stats, S.scene);
   const { label, notes, ...values } = a;
-  const amount = S.params.auto && S.params.auto.wb && S.autoInfo && S.params.auto.amount !== undefined && S.autoInfoBase === S.baseId ? S.params.auto.amount : 100;
+  const amount = S.params.auto && S.params.auto.wb && S.autoInfo && S.params.auto.amount !== undefined && S.autoInfoBase === S.baseId ? S.params.auto.amount : 0;
   S.params.auto = { ...values, amount };
   S.autoInfoBase = S.baseId;
   const titles = { oscura: 'Foto oscura', clara: 'Foto clara', plana: 'Foto plana', equilibrada: 'Buena luz' };
@@ -774,10 +772,11 @@ function paintPanel() {
     const fixBox = el('div', { class: 'seg' });
     S.diag.fixes.forEach((f) => fixBox.append(el('button', { class: S.params.fixId === f.id ? 'on' : '', 'aria-pressed': String(S.params.fixId === f.id), onclick: () => { toggleFix(f); paintPanel(); } }, `✦ ${f.name}`)));
     panel.append(fixBox);
-    panel.append(el('ul', { class: 'auto-list' }, info.notes.map((n) => el('li', {}, n))));
-    panel.append(sliderRow('auto-amount', 'Fuerza del autoajuste', 0, 100, 1, Object.assign(() => a.amount, { def: 100 }), (v) => { S.params.auto.amount = v; S.stripCache.clear(); }, ' %'));
+    if (a.amount) panel.append(el('ul', { class: 'auto-list' }, info.notes.map((n) => el('li', {}, n))));
+    else panel.append(el('p', { class: 'note' }, 'Tu foto se queda tal como la tomaste. Solo cambia si tocas una sugerencia o subes este control.'));
+    panel.append(sliderRow('auto-amount', 'Autoajuste opcional', 0, 100, 1, Object.assign(() => a.amount, { def: 0 }), (v) => { S.params.auto.amount = v; S.stripCache.clear(); }, ' %'));
     const amt = $('#auto-amount', panel);
-    amt.addEventListener('change', () => paintStrip());
+    amt.addEventListener('change', () => { paintStrip(); paintPanel(); });
     panel.append(el('p', { class: 'note' }, `Escena: ${info.scene.label.toLowerCase()}. ${info.scene.why}.`));
   } else if (SECTIONS[t]) {
     const s = SECTIONS[t];

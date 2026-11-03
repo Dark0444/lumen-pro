@@ -50,6 +50,7 @@ await page.click('.btn:has-text("ejemplo")');
 await page.waitForSelector('#edCanvas');
 await page.waitForFunction(() => !document.querySelector('.thumb-pic.wait') && document.querySelectorAll('.thumb:not(.fix)').length === 85, null, { timeout: 240000 });
 check('85 miniaturas: sin look y 84 looks', true);
+check('La foto abre sin ajuste automático', await page.evaluate(() => __lumen.S.params.auto.amount === 0 && !__lumen.S.params.fix));
 check('Sugerencias visibles', (await page.$$('.thumb.fix')).length >= 1, await page.textContent('#diagRow'));
 await page.tap('.thumb.fix');
 await page.waitForFunction(() => window.__lumen.S.params.fix);

@@ -135,8 +135,8 @@ const Core = (() => {
         { id: 'sombras-abiertas', name: 'Abrir sombras', fix: { light: { shadows: 42, highlights: -10, contrast: 4 } } },
       ]);
     }
-    if (s.mean > 0.62 || s.clipHi > 0.06) {
-      add('bright', s.clipHi > 0.06 ? 'Altas luces quemadas' : 'Foto muy clara', [
+    if (s.clipHi > 0.06) {
+      add('bright', 'Altas luces quemadas', [
         { id: 'recuperar-luces', name: 'Recuperar luces', fix: { light: { exposure: -0.22, highlights: -42, whites: -16, contrast: 8 } } },
       ]);
     }
