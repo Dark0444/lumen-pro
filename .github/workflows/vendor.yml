@@ -25,7 +25,9 @@ jobs:
           mkdir -p v/ort v/models v/mediapipe/wasm v/heic extra
           npm pack onnxruntime-web@1.23.2 --silent
           tar xzf onnxruntime-web-1.23.2.tgz
-          cp package/dist/ort.webgpu.min.js package/dist/ort-wasm-simd-threaded.jsep.mjs package/dist/ort-wasm-simd-threaded.jsep.wasm v/ort/
+          ls -la package/dist | grep -E 'ort-wasm|ort.webgpu.min.js$'
+          cp package/dist/ort.webgpu.min.js package/dist/ort-wasm-simd-threaded.* v/ort/
+          rm -f v/ort/*.map
           cp package/LICENSE v/ort/ 2>/dev/null || true
           rm -rf package
           npm pack @mediapipe/tasks-vision@0.10.14 --silent
