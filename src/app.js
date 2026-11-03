@@ -431,6 +431,7 @@ function visiblePresets() {
     if (S.filter === 'fav' && !S.favs.has(p.id)) return false;
     if (CATS.includes(S.filter) && p.cat !== S.filter) return false;
     if (S.filter === 'custom' && !p.custom) return false;
+    if (S.filter === 'premium' && !p.premium) return false;
     return !q || `${p.name} ${Core.CAT_LABEL[p.cat] || ''}`.toLowerCase().includes(q);
   });
 }
@@ -589,7 +590,7 @@ function chipRow(onChange) {
   const counts = {};
   orderedPresets().forEach((p) => { counts[p.cat] = (counts[p.cat] || 0) + 1; });
   const chip = (id, label) => el('button', { class: 'chip' + (S.filter === id ? ' on' : ''), 'aria-pressed': String(S.filter === id), onclick: () => { S.filter = id; onChange(); } }, label);
-  const chips = [chip('todos', 'Para ti')];
+  const chips = [chip('todos', 'Para ti'), chip('premium', 'Premium')];
   if (S.customs.length) chips.push(chip('custom', 'Mis presets'));
   CATS.forEach((c) => chips.push(chip(c, Core.CAT_LABEL[c])));
   chips.push(chip('fav', `Favoritos${S.favs.size ? ' ' + S.favs.size : ''}`));
@@ -1371,9 +1372,9 @@ const QUALITY_OPTS = [
 ];
 function planText(plan, w, h) {
   if (plan.kind === 'none') return 'Se conserva la resolución que subiste.';
-  if (plan.kind === 'resize') return `Tu foto mide ${w}×${h} px y sobra resolución. La llevo a ${plan.w}×${plan.h} con reescalado de alta calidad y nitidez limpia.`;
-  if (plan.kind === 'fusion') return `Combino tu foto de ${w}×${h} px con reconstrucción de detalle. Se quita el ruido y se conserva la textura real.`;
-  return `Tu foto mide ${w}×${h} px. Reconstruyo el detalle hasta ${plan.w}×${plan.h} con la IA incluida en la app.`;
+  if (plan.kind === 'resize') return `Tu foto mide ${w}×${h} px y ya tiene la resolución necesaria. La llevo a ${plan.w}×${plan.h} con nitidez limpia en pocos segundos.`;
+  if (plan.kind === 'fusion') return `Combino tu foto de ${w}×${h} px con reconstrucción de detalle. Se quita el ruido y se conserva la textura real. Puede tardar hasta 2 minutos.`;
+  return `Tu foto mide ${w}×${h} px. Reconstruyo el detalle hasta ${plan.w}×${plan.h} con la IA incluida en la app. Puede tardar hasta 2 minutos.`;
 }
 function screenEnhance(host) {
   syncEnhGeo();
@@ -1508,6 +1509,7 @@ async function applyEnhance(ui, status) {
   status.append(el('div', { class: 'panelbox' }, el('strong', {}, 'Mejorando tu foto'), el('div', { class: 'bar-p', role: 'progressbar', 'aria-valuemin': 0, 'aria-valuemax': 100 }, bar), lbl, cancelBtn));
   const prog = (f, txt) => { bar.style.width = `${Math.round(f * 100)}%`; bar.parentElement.setAttribute('aria-valuenow', Math.round(f * 100)); if (txt) lbl.textContent = txt; };
   S.enhBusy = true;
+  const startedAt = performance.now();
   try {
     const left = await neutralCrop();
     const w = left.width, h = left.height, plan = Core.qualityPlan(w, h, ui.mode);
@@ -1542,7 +1544,7 @@ async function applyEnhance(ui, status) {
     setCmpLabel();
     if (S.drawCmp) S.drawCmp();
     status.innerHTML = '';
-    status.append(el('div', { class: 'panelbox' }, el('strong', {}, 'Listo'), el('p', { class: 'note' }, `${S.finalC.width}×${S.finalC.height} px · ${label}`)));
+    status.append(el('div', { class: 'panelbox' }, el('strong', {}, 'Listo'), el('p', { class: 'note' }, `${S.finalC.width}×${S.finalC.height} px · ${label} · ${Core.fmtTime((performance.now() - startedAt) / 1000)}`)));
     haptic();
   } catch (e) {
     status.innerHTML = '';
@@ -1597,8 +1599,8 @@ async function screenDownload(host) {
   const setName = () => { if (!userName) nameI.value = Core.exportName(S.name, pName(), S.enh.mode, ext()); };
   nameI.addEventListener('input', () => { userName = true; });
   const estimate = async () => {
-    const my = ++token;
-    dl.disabled = true; sizeEl.textContent = 'Calculando…';
+    const my = ++token, t0 = performance.now();
+    dl.disabled = true; dl.textContent = 'Preparando…'; sizeEl.textContent = 'Calculando…';
     try {
       const c = await ensureFinal();
       if (my !== token) return;
@@ -1609,7 +1611,8 @@ async function screenDownload(host) {
       b = await withExif(b, c.width, c.height);
       current = b;
       sizeEl.textContent = Core.fmtBytes(b.size);
-      dims.textContent = `${c.width}×${c.height} px · ${S.enh.label}`;
+      dims.textContent = `${c.width}×${c.height} px · ${S.enh.label} · lista en ${Core.fmtTime((performance.now() - t0) / 1000)}`;
+      dl.textContent = 'Descargar';
       setName();
       dl.disabled = false;
       const pv = preview.getContext('2d');
@@ -1637,10 +1640,12 @@ async function screenDownload(host) {
   dl.addEventListener('click', async () => {
     if (!current) return;
     try {
+      dl.disabled = true; dl.textContent = 'Guardando…';
+      await nextFrame();
       await save(current, nameI.value || 'foto.' + ext());
       toast(Native.on ? `Guardada en tu galería, álbum LUMEN PRO: ${nameI.value}` : `Guardado: ${nameI.value}`);
       haptic();
-    } catch (e) { toast(`No se pudo guardar la foto. ${e.message}`, 'err'); }
+    } catch (e) { toast(`No se pudo guardar la foto. ${e.message}`, 'err'); } finally { dl.disabled = false; dl.textContent = 'Descargar'; }
   });
   share.addEventListener('click', async () => { try { if (Native.on) { await Native.share(current, nameI.value); return; } await navigator.share({ files: [new File([current], nameI.value, { type: current.type })], title: 'Foto editada con LUMEN PRO' }); } catch (e) { if (e.name !== 'AbortError') toast('No se pudo compartir. Descarga el archivo y compártelo desde tu galería.', 'err'); } });
   zipBtn.addEventListener('click', async () => {
@@ -1705,7 +1710,7 @@ const Native = {
   on: !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()),
   /* El puente pasa texto: la imagen viaja en trozos para no agotar la memoria */
   async send(blob, name) {
-    const P = window.Capacitor.Plugins.LumenNativo, step = 768 * 1024;
+    const P = window.Capacitor.Plugins.LumenNativo, step = 1536 * 1024;
     await P.begin({ name, mime: blob.type || 'application/octet-stream' });
     for (let i = 0; i < blob.size; i += step) {
       await P.chunk({ data: bytesToB64(new Uint8Array(await blob.slice(i, i + step).arrayBuffer())) });

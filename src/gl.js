@@ -6,7 +6,7 @@ void main(){ vUv=aPos; gl_Position=vec4(aPos.x*2.-1.,(1.-aPos.y*2.)*uFlip,0.,1.)
 const FS_MAIN = `#version 300 es
 precision highp float; precision highp sampler3D;
 in vec2 vUv; out vec4 fragColor;
-uniform sampler2D uSrc,uMask,uCurve,uBlurL,uBlurS,uBlurM; uniform sampler3D uLut;
+uniform sampler2D uSrc,uMask,uCurve,uBlurS,uBlurM; uniform vec2 uBandTap; uniform sampler3D uLut;
 uniform vec4 uTile,uSub; uniform mat3 uSrcXf,uMaskXf; uniform vec2 uTap,uOutSize;
 uniform float uLowPass,uIdentity,uLutOn,uLutMix,uLutSize,uTetra,uDither,uSplit,uShowMask,uHasBlur,uAspect;
 uniform float uExp,uCon,uHi,uSh,uWh,uBl,uTemp,uTint,uVib,uSat,uHslOn,uCurveOn,uGradeOn,uSkinProt;
@@ -91,9 +91,15 @@ void main(){
  if(uMaskOn>.5){c=local(c,uMkP,mask.r);c=local(c,uMkS,mask.g);c=local(c,uMkB,mask.b);}
  if(uLowPass>.5){c=clamp(c,0.,1.);fragColor=vec4(c,min(c.r,min(c.g,c.b)));return;}
  if(uHasBlur>.5){
-  vec4 bM=texture(uBlurM,ou),bS=texture(uBlurS,ou),bL=texture(uBlurL,ou);float y=luma(c);
-  if(uTex!=0.)c+=(luma(bL.rgb)-luma(bS.rgb))*uTex*2.2;
-  if(uClar!=0.){float mm=1.-pow(abs(2.*y-1.),2.);c+=(luma(bS.rgb)-luma(bM.rgb))*uClar*1.9*mm;}
+  vec4 bM=texture(uBlurM,ou),bS=texture(uBlurS,ou);float y=luma(c);
+  /* A más de 1600 px, el detalle más fino no se amplifica: la exportación se ve como la vista previa */
+  float yb=y;
+  if(uBandTap.x>0.&&(uTex!=0.||uClar!=0.)){vec2 t=uBandTap;
+   float a=luma(texture(uSrc,su+vec2(t.x,0.)).rgb)+luma(texture(uSrc,su-vec2(t.x,0.)).rgb)+luma(texture(uSrc,su+vec2(0.,t.y)).rgb)+luma(texture(uSrc,su-vec2(0.,t.y)).rgb);
+   float d=luma(texture(uSrc,su+t*.7).rgb)+luma(texture(uSrc,su-t*.7).rgb)+luma(texture(uSrc,su+vec2(t.x,-t.y)*.7).rgb)+luma(texture(uSrc,su+vec2(-t.x,t.y)*.7).rgb);
+   yb=y-(luma(src.rgb)-(a+d)*.125);}
+  if(uTex!=0.)c+=(yb-luma(bS.rgb))*uTex*1.5;
+  if(uClar!=0.){float mm=1.-pow(abs(2.*y-1.),2.);c+=(yb-luma(bM.rgb))*uClar*1.4*mm;}
   if(uHaze>0.){float t=max(1.-.92*uHaze*bM.a/max(max(uAtmos.r,max(uAtmos.g,uAtmos.b)),.2),.22);c=(c-uAtmos)/t+uAtmos;}
   else if(uHaze<0.)c=mix(c,uAtmos,-uHaze*.45);
   if(uHal>0.){float h=max(luma(bM.rgb)-.62,0.)*2.6;c+=vec3(1.,.36,.14)*h*uHal*.55;}
@@ -351,7 +357,7 @@ class Renderer {
   updateBlur(job, aspect) {
     const gl = this.gl, long = job.outW * job.outH < 200000 ? 256 : 1024, low = this.ensureLow(aspect, long), pr = this.main;
     /* Evita leer y escribir la misma textura en esta pasada */
-    for (const unit of [gl.TEXTURE4, gl.TEXTURE5, gl.TEXTURE6]) { gl.activeTexture(unit); gl.bindTexture(gl.TEXTURE_2D, this.white); }
+    for (const unit of [gl.TEXTURE4, gl.TEXTURE5]) { gl.activeTexture(unit); gl.bindTexture(gl.TEXTURE_2D, this.white); }
     gl.useProgram(pr.p);
     gl.bindFramebuffer(gl.FRAMEBUFFER, low.l.f);
     gl.viewport(0, 0, low.l.w, low.l.h);
@@ -411,6 +417,11 @@ class Renderer {
     const m = job.srcXf || Core.IDENTITY_XF, sub = job.src.sub || [0, 0, 1, 1];
     const texW = job.src.w || job.outW, texH = job.src.h || job.outH;
     gl.uniform2f(this.loc(pr, 'uTap'), Math.max(Math.hypot(m[0], m[3]) / job.outW, 1 / texW) / sub[2], Math.max(Math.hypot(m[1], m[4]) / job.outH, 1 / texH) / sub[3]);
+    const tl = job.tile || [0, 0, 1, 1];
+    const effLong = Math.max((job.pxW / tl[2]), (job.pxH / tl[3]));
+    const band = effLong / 1600;
+    if (band > 1.25) gl.uniform2f(this.loc(pr, 'uBandTap'), band * Math.hypot(m[0], m[3]) / job.outW / sub[2], band * Math.hypot(m[1], m[4]) / job.outH / sub[3]);
+    else gl.uniform2f(this.loc(pr, 'uBandTap'), 0, 0);
     u1('uSharp', d.sharpen / 100); u1('uClar', d.clarity / 100); u1('uTex', d.texture / 100); u1('uNoise', d.denoise / 100); u1('uHaze', d.dehaze / 100);
     u1('uVig', fx.vignette / 100); u1('uGrain', fx.grain / 100); u1('uHal', fx.halation / 100);
     u1('uGrainSize', Math.max(1, Math.max(job.outW, job.outH) / 1800));
@@ -421,11 +432,9 @@ class Renderer {
     if (needBlur) {
       gl.activeTexture(gl.TEXTURE4); gl.bindTexture(gl.TEXTURE_2D, this.low.s2.t); gl.uniform1i(this.loc(pr, 'uBlurS'), 4);
       gl.activeTexture(gl.TEXTURE5); gl.bindTexture(gl.TEXTURE_2D, this.low.m2.t); gl.uniform1i(this.loc(pr, 'uBlurM'), 5);
-      gl.activeTexture(gl.TEXTURE6); gl.bindTexture(gl.TEXTURE_2D, this.low.l.t); gl.uniform1i(this.loc(pr, 'uBlurL'), 6);
     } else {
       gl.activeTexture(gl.TEXTURE4); gl.bindTexture(gl.TEXTURE_2D, this.white); gl.uniform1i(this.loc(pr, 'uBlurS'), 4);
       gl.activeTexture(gl.TEXTURE5); gl.bindTexture(gl.TEXTURE_2D, this.white); gl.uniform1i(this.loc(pr, 'uBlurM'), 5);
-      gl.activeTexture(gl.TEXTURE6); gl.bindTexture(gl.TEXTURE_2D, this.white); gl.uniform1i(this.loc(pr, 'uBlurL'), 6);
     }
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     return true;

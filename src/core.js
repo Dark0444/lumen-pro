@@ -179,20 +179,23 @@ const Core = (() => {
   /* Contraste adaptativo (CAS): afila bordes sin halos y casi sin subir el ruido. */
   function casSharpen(src, w, h, amount) {
     const out = new Uint8ClampedArray(src.length);
-    const peak = -1 / (8 - 3 * clamp(amount));
-    const at = (x, y, c) => src[(y * w + x) * 4 + c];
+    const peak = -1 / (8 - 3 * clamp(amount)), row = w * 4;
     for (let y = 0; y < h; y++) {
-      const up = y > 0 ? y - 1 : y, dn = y < h - 1 ? y + 1 : y;
-      for (let x = 0; x < w; x++) {
-        const lf = x > 0 ? x - 1 : x, rt = x < w - 1 ? x + 1 : x, k = (y * w + x) * 4;
-        const g = at(x, y, 1), gn = at(x, up, 1), gs = at(x, dn, 1), gw = at(lf, y, 1), ge = at(rt, y, 1);
-        const mn = Math.min(g, gn, gs, gw, ge), mx = Math.max(g, gn, gs, gw, ge);
-        const room = Math.min(mn, 255 - mx);
-        const wgt = mx > 0 ? Math.sqrt(Math.max(0, room / mx)) * peak : 0;
-        const div = 1 / (1 + 4 * wgt);
-        out[k] = (src[k] + wgt * (at(x, up, 0) + at(x, dn, 0) + at(lf, y, 0) + at(rt, y, 0))) * div;
+      const up = y > 0 ? -row : 0, dn = y < h - 1 ? row : 0;
+      for (let x = 0, k = y * row; x < w; x++, k += 4) {
+        const lf = x > 0 ? -4 : 0, rt = x < w - 1 ? 4 : 0;
+        const g = src[k + 1], gn = src[k + up + 1], gs = src[k + dn + 1], gw = src[k + lf + 1], ge = src[k + rt + 1];
+        let mn = g, mx = g;
+        if (gn < mn) mn = gn; else if (gn > mx) mx = gn;
+        if (gs < mn) mn = gs; else if (gs > mx) mx = gs;
+        if (gw < mn) mn = gw; else if (gw > mx) mx = gw;
+        if (ge < mn) mn = ge; else if (ge > mx) mx = ge;
+        const room = mn < 255 - mx ? mn : 255 - mx;
+        if (mx === 0 || room <= 0) { out[k] = src[k]; out[k + 1] = g; out[k + 2] = src[k + 2]; out[k + 3] = src[k + 3]; continue; }
+        const wgt = Math.sqrt(room / mx) * peak, div = 1 / (1 + 4 * wgt);
+        out[k] = (src[k] + wgt * (src[k + up] + src[k + dn] + src[k + lf] + src[k + rt])) * div;
         out[k + 1] = (g + wgt * (gn + gs + gw + ge)) * div;
-        out[k + 2] = (src[k + 2] + wgt * (at(x, up, 2) + at(x, dn, 2) + at(lf, y, 2) + at(rt, y, 2))) * div;
+        out[k + 2] = (src[k + 2] + wgt * (src[k + up + 2] + src[k + dn + 2] + src[k + lf + 2] + src[k + rt + 2])) * div;
         out[k + 3] = src[k + 3];
       }
     }
@@ -214,8 +217,7 @@ const Core = (() => {
     const t = targetDims(w, h, mode), long = Math.max(w, h);
     if (mode === 'original') return { ...t, kind: 'none', input: 1, mix: 0, cas: 0 };
     if (mode === 'detail') return { ...t, kind: 'fusion', input: long > 2400 ? 2400 / long : 1, mix: 0.6, cas: 0.5 };
-    if (long >= t.long * 1.9) return { ...t, kind: 'resize', input: 1, mix: 0, cas: 0.42 };
-    if (long >= t.long) return { ...t, kind: 'fusion', input: Math.min(1, (t.long * 0.5) / long), mix: 0.45, cas: 0.45 };
+    if (long >= t.long) return { ...t, kind: 'resize', input: 1, mix: 0, cas: 0.45 };
     return { ...t, kind: 'rebuild', input: 1, mix: 0.82, cas: 0.4 };
   }
 
@@ -642,7 +644,7 @@ const Core = (() => {
     arquitectura: { viajes: 22, moody: 22, bn: 22, cine: 22, moviles: 20, limpios: 16, pelicula: 10, calidos: 4, vintage: 4, retratos: 0, noche: 0 },
     general: { moviles: 24, limpios: 20, calidos: 20, viajes: 18, pelicula: 18, retratos: 14, moody: 14, cine: 14, bn: 8, vintage: 6, noche: 0 },
   };
-  const CAT_LABEL = { moviles: 'Móviles', retratos: 'Retrato pro', viajes: 'Paisaje y viaje', noche: 'Noche', limpios: 'Limpios', calidos: 'Cálidos', moody: 'Moody', cine: 'Cine', pelicula: 'Película', vintage: 'Vintage', bn: 'Blanco y negro', custom: 'Mis presets' };
+  const CAT_LABEL = { premium: 'Premium', moviles: 'Móviles', retratos: 'Retrato pro', viajes: 'Paisaje y viaje', noche: 'Noche', limpios: 'Limpios', calidos: 'Cálidos', moody: 'Moody', cine: 'Cine', pelicula: 'Película', vintage: 'Vintage', bn: 'Blanco y negro', custom: 'Mis presets' };
   const ISSUE_TEXT = { dark: 'tu foto está oscura y este look la aclara', bright: 'tu foto está muy clara y este look la controla', flat: 'tu foto está opaca y este look le da fuerza', oversat: 'tu foto está muy saturada y este look calma el color', dull: 'el color está apagado y este look lo levanta', backlit: 'hay contraluz y este look equilibra la escena', warm: 'la luz es muy cálida y este look la compensa', cool: 'la luz es muy fría y este look la calienta' };
   function rankPresets(stats, scene, presets) {
     const diag = diagnose(stats, scene);
@@ -678,7 +680,7 @@ const Core = (() => {
       
       suggested = Math.max(60, Math.round(suggested / 5) * 5);
       const top = parts.filter((x) => x.pts > 0).sort((a, b) => b.pts - a.pts).slice(0, 2).map((x) => x.txt);
-      return { id: p.id, cat: p.cat, bw: !!m.bw, score: Math.round(score * 10) / 10, parts, reason: top.join('; ') || 'buen ajuste general', suggested, suggestedWhy: notes.join(', ') };
+      return { id: p.id, cat: p.cat, premium: !!p.premium, bw: !!m.bw, score: Math.round(score * 10) / 10, parts, reason: top.join('; ') || 'buen ajuste general', suggested, suggestedWhy: notes.join(', ') };
     }).sort((a, b) => b.score - a.score || a.id.localeCompare(b.id));
     /* Variedad: máximo 2 en B/N y 2 de la misma categoría entre los 8 recomendados */
     const picks = [], bwMax = scene.id === 'arquitectura' || scene.id === 'noche' ? 2 : 1;
@@ -688,12 +690,14 @@ const Core = (() => {
       counts[it.cat] = counts[it.cat] || 0;
       if (it.bw && picks.filter((x) => x.bw).length >= bwMax) continue;
       if (counts[it.cat] >= 2) continue;
+      if (it.premium && picks.filter((x) => x.premium).length >= 3) continue;
       counts[it.cat]++;
       picks.push(it);
     }
     for (const it of list) if (picks.length < 8 && !picks.includes(it)) picks.push(it);
     const set = new Set(picks.map((p) => p.id));
-    const ordered = [...picks, ...list.filter((x) => !set.has(x.id))];
+    const rest = list.filter((x) => !set.has(x.id));
+    const ordered = [...picks.filter((x) => !x.premium), ...picks.filter((x) => x.premium), ...rest.filter((x) => !x.premium), ...rest.filter((x) => x.premium)];
     return ordered.map((x) => ({ ...x, recommended: set.has(x.id) }));
   }
 

@@ -143,7 +143,7 @@ const fuseWorker = async (ai, base, mix) => {
 };
 
 /* Elige modelo y tamaño según lo que aguante el dispositivo */
-const BUDGET_SECONDS = 240, TILE_OVERLAP = 32;
+const BUDGET_SECONDS = 90, TILE_OVERLAP = 32;
 function tileRgb(rgba, w, t) {
   const rgb = new Uint8Array(t.w * t.h * 3);
   for (let y = 0; y < t.h; y++) for (let x = 0; x < t.w; x++) {
@@ -168,7 +168,7 @@ async function chooseEngine(rgba, w, h, onStatus) {
       onStatus('Probando la máxima calidad en tu teléfono…');
       const ep = await startModel('max', false, true);
       const perPx = await benchmark(rgba, w, h, 128);
-      if (perPx * totalPx(256) <= BUDGET_SECONDS) return { key: 'max', ep, tile: 256, perPx, scale: 1 };
+      if (perPx * totalPx(256) <= BUDGET_SECONDS * 0.7) return { key: 'max', ep, tile: 256, perPx, scale: 1 };
     } catch { aiPool.stop(); }
   }
   onStatus('Preparando el motor rápido…');

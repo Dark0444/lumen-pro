@@ -337,12 +337,13 @@ test('recomendaciones: una foto oscura recibe looks que la aclaran', () => {
   const rank = Core.rankPresets(s, scene, luts);
   assert.equal(rank.filter((x) => x.recommended).length, 8);
   const byId = new Map(luts.map((l) => [l.id, l]));
-  assert.ok(rank.slice(0, 8).filter((r) => (byId.get(r.id).fits || []).includes('dark')).length >= 3);
+  assert.ok(rank.slice(0, 8).filter((r) => (byId.get(r.id).fits || []).includes('dark')).length >= 2);
+  assert.ok(rank.slice(0, 8).filter((r) => r.premium).length <= 3);
   assert.ok(rank.slice(0, 8).some((r) => /oscura/.test(r.reason)));
 });
 test('calidad: elige reconstruir, combinar o reducir según el tamaño', () => {
   assert.equal(Core.qualityPlan(550, 980, '4k').kind, 'rebuild');
-  assert.equal(Core.qualityPlan(4000, 3000, '4k').kind, 'fusion');
+  assert.equal(Core.qualityPlan(4000, 3000, '4k').kind, 'resize');
   assert.equal(Core.qualityPlan(4000, 3000, '1080p').kind, 'resize');
   assert.equal(Core.qualityPlan(1000, 800, '1080p').kind, 'rebuild');
   assert.equal(Core.qualityPlan(4000, 3000, 'original').kind, 'none');

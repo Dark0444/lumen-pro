@@ -21,5 +21,6 @@
       "backgroundColor": "#08080A",
       "overlaysWebView": false
     }
-  }
+  },
+  "loggingBehavior": "none"
 }
