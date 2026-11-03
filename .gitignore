@@ -1,0 +1,14 @@
+# Se generan en cada compilación
+/android/
+/ios/
+/www/
+/dist/
+node_modules/
+package-lock.json
+*.log
+install.txt
+capadd.txt
+gradle.txt
+assets.txt
+LumenPro.apk
+.DS_Store

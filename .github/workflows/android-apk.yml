@@ -1,0 +1,129 @@
+name: APK de LUMEN PRO
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '20'
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Pruebas del motor
+        run: node --test test/core.test.js
+
+      - name: Compilar la app web
+        run: python3 build/build.py
+
+      - name: Probar la app en un navegador
+        run: |
+          set +e
+          npm install --no-save --no-package-lock playwright@1.49.1 > pw.txt 2>&1
+          npx playwright install --with-deps chromium >> pw.txt 2>&1
+          if [ $? -ne 0 ]; then
+            echo "::warning title=Sin navegador::No se pudo preparar la prueba; se compila sin ella."
+            exit 0
+          fi
+          node test/smoke.mjs 2>&1 | tee smoke.txt
+          code=${PIPESTATUS[0]}
+          if [ $code -ne 0 ]; then
+            echo "::error title=La prueba en el navegador falló::$(grep MAL smoke.txt | head -10 | sed ':a;N;$!ba;s/\n/%0A/g')"
+            exit 1
+          fi
+
+      - name: Instalar dependencias
+        run: |
+          set +e
+          npm install > install.txt 2>&1
+          code=$?
+          if [ $code -ne 0 ]; then
+            msg=$(grep -iE "error|ETARGET|notarget|ERESOLVE" install.txt | head -30 | sed ':a;N;$!ba;s/\n/%0A/g')
+            echo "::error title=npm install falló::$msg"
+            exit 1
+          fi
+
+      - name: Copiar fuentes locales
+        run: node scripts/vendor.js
+
+      - name: Generar el proyecto Android
+        run: |
+          set +e
+          npx cap add android > capadd.txt 2>&1
+          code=$?
+          if [ $code -ne 0 ]; then
+            msg=$(tail -30 capadd.txt | sed ':a;N;$!ba;s/\n/%0A/g')
+            echo "::error title=cap add android falló::$msg"
+            exit 1
+          fi
+          npx cap sync android >> capadd.txt 2>&1
+
+      - name: Aplicar firma, permisos y plugin
+        run: node scripts/patch-android.js
+
+      - name: Generar íconos y splash
+        continue-on-error: true
+        run: |
+          set +e
+          npx @capacitor/assets generate --android --assetPath assets > assets.txt 2>&1
+          if [ $? -ne 0 ]; then
+            echo "::warning title=Íconos::No se generaron los íconos.%0A$(tail -15 assets.txt | sed ':a;N;$!ba;s/\n/%0A/g')"
+          fi
+
+      - name: Compilar el APK
+        run: |
+          set +e
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleRelease --no-daemon --console=plain > ../gradle.txt 2>&1
+          code=$?
+          cd ..
+          if [ $code -ne 0 ]; then
+            msg=$(grep -E "What went wrong|error:|ERROR:|Execution failed|not found|FAILED|Caused by" -A3 gradle.txt | head -50 | sed ':a;N;$!ba;s/\n/%0A/g')
+            echo "::error title=Gradle falló::$msg"
+            exit 1
+          fi
+
+      - name: Preparar el archivo
+        run: |
+          APK=$(find android/app/build/outputs/apk/release -name "*.apk" | head -1)
+          if [ -z "$APK" ]; then
+            echo "::error title=No se encontró el APK::Gradle terminó pero no dejó ningún .apk"
+            exit 1
+          fi
+          cp "$APK" LumenPro.apk
+          echo "TAMANO=$(du -h LumenPro.apk | cut -f1)" >> $GITHUB_ENV
+          BT=$(ls -d $ANDROID_HOME/build-tools/* | sort -V | tail -1)
+          $BT/apksigner verify --print-certs LumenPro.apk | head -3
+          $BT/aapt2 dump badging LumenPro.apk | grep -E "^package:|sdkVersion|targetSdkVersion|application-label:"
+          unzip -l LumenPro.apk | grep -E "assets/public/(index.html|vendor/fuentes.css)"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LumenPro-apk
+          path: LumenPro.apk
+
+      - name: Publicar para descargar
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete apk-latest --cleanup-tag -y || true
+          gh release create apk-latest LumenPro.apk dist/LUMEN-PRO.html \
+            --title "LUMEN PRO (última versión)" \
+            --notes "APK compilado desde el commit ${GITHUB_SHA::7}. Tamaño: ${TAMANO}. Se instala encima de la versión anterior porque siempre va firmado con la misma llave. Requiere Android 10 o superior." \
+            --latest
+          echo "::notice title=Descarga::https://github.com/${GITHUB_REPOSITORY}/releases/download/apk-latest/LumenPro.apk"
