@@ -1,7 +1,7 @@
 /* LUMEN PRO · interfaz */
 const LUTS = JSON.parse(document.getElementById('lut-data').textContent);
 document.getElementById('lut-data').remove();
-const CATS = ['limpios', 'calidos', 'moody', 'cine', 'pelicula', 'bn'];
+const CATS = ['moviles', 'retratos', 'viajes', 'noche', 'limpios', 'calidos', 'moody', 'cine', 'pelicula', 'vintage', 'bn'];
 const STEPS = [['editar', 'Editar'], ['galeria', 'Looks'], ['mejorar', 'Calidad'], ['descargar', 'Guardar'], ['subir', 'Nueva foto']];
 const $ = (s, r = document) => r.querySelector(s);
 function el(tag, attrs, ...kids) {
@@ -95,7 +95,7 @@ async function ensureLut(id) {
       const p = S.presets.get(id);
       let cube;
       if (p.cube) cube = p.cube;
-      else if (p.png) { const { rgba, w, h } = await decodePng(new Blob([b64ToBytes(p.png)], { type: 'image/png' })); cube = Core.haldToCube(rgba, w, h); }
+      else if (p.png || p.ref) { const png = p.png || S.presets.get(p.ref).png; const { rgba, w, h } = await decodePng(new Blob([b64ToBytes(png)], { type: 'image/png' })); cube = Core.haldToCube(rgba, w, h); }
       else return null;
       return R.bindLut(id, () => cube);
     })().finally(() => lutLoads.delete(id)));
@@ -136,9 +136,8 @@ async function decodeFile(file) {
     if (!isHeic) throw new Error('No se pudo leer esa imagen. Usa un archivo JPG, PNG, WebP o HEIC que no esté dañado.');
   }
   if (!window.heic2any) {
-    toast('Tu navegador no abre HEIC directamente. Descargando el convertidor…');
-    try { await loadScript('https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js'); } catch {
-      throw new Error('Este navegador no abre HEIC y no hay conexión para el convertidor. Conéctate a internet o exporta la foto como JPG.');
+    try { await loadScript(VENDOR + 'heic/heic2any.min.js'); } catch {
+      throw new Error('No se pudo abrir esta foto HEIC. Expórtala como JPG desde tu galería.');
     }
   }
   const out = await window.heic2any({ blob: file, toType: 'image/jpeg', quality: 0.97 });
@@ -267,7 +266,8 @@ function settleScene() {
   S.params.auto = { ...values, amount };
   S.autoInfoBase = S.baseId;
   const titles = { oscura: 'Foto oscura', clara: 'Foto clara', plana: 'Foto plana', equilibrada: 'Buena luz' };
-  S.autoInfo = { title: `${titles[label]} · corregida`, label: titles[label], notes, scene: S.scene };
+  S.diag = Core.diagnose(S.stats, S.scene);
+  S.autoInfo = { title: S.diag.summary, label: S.diag.summary, notes, scene: S.scene };
 }
 async function detectFaces() {
   S.knownFaces = undefined;
@@ -327,7 +327,7 @@ async function screenUpload(host) {
   const cam = el('input', { type: 'file', id: 'camInput', accept: 'image/*', capture: 'environment', hidden: true, onchange: (e) => loadFile(e.target.files[0]) });
   const drop = el('section', { class: 'drop', 'aria-label': 'Zona para subir la foto' },
     el('h1', { html: 'Sube una foto.<br><em>Te la dejo lista.</em>' }),
-    el('p', {}, 'Detecta si está oscura, clara o con mal color y la corrige sola. Luego desliza entre 40 looks o pide cambios como «quita el árbol» o «ponme en París».'),
+    el('p', {}, 'Detecta si está oscura, opaca o muy saturada, te sugiere cómo arreglarla y te deja deslizar entre más de 80 looks. Exporta hasta 4K, gratis y sin internet.'),
     el('div', { class: 'row' },
       el('button', { class: 'btn primary', onclick: () => input.click() }, 'Elegir foto'),
       el('button', { class: 'btn', onclick: useSample }, 'Probar con una de ejemplo'),
@@ -456,6 +456,17 @@ async function selectLook(id, opts = {}) {
   apply();
   if (S.step === 'editar') requestRender(false);
 }
+function toggleFix(f) {
+  const on = S.params.fixId === f.id;
+  S.params.fixId = on ? null : f.id;
+  S.params.fix = on ? null : f.fix;
+  commit();
+  invalidateEnh();
+  markStrip();
+  showLookPill(null, on ? 'Sugerencia quitada' : f.name);
+  haptic();
+  if (S.step === 'editar') { if (S.tab === 'auto') paintPanel(); requestRender(false); }
+}
 function stepLook(d) {
   const list = lookIds();
   const i = list.indexOf(S.params.presetId);
@@ -493,6 +504,8 @@ function paintIntensity() {
   if (!row) return;
   const id = S.params.presetId;
   row.hidden = !id;
+  const dr = $('#diagRow');
+  if (dr) dr.hidden = !!id;
   if (!id) return;
   const range = $('#lookIntensity'), out = $('#lookIntensityOut'), name = $('#lookNow');
   range.value = S.params.intensity;
@@ -503,7 +516,8 @@ function paintIntensity() {
   fav.setAttribute('aria-pressed', String(S.favs.has(id)));
 }
 function markStrip() {
-  document.querySelectorAll('.thumb').forEach((t) => {
+  document.querySelectorAll('.thumb.fix').forEach((t) => { const on = t.dataset.fix === S.params.fixId; t.classList.toggle('on', on); t.setAttribute('aria-pressed', String(on)); });
+  document.querySelectorAll('.thumb:not(.fix)').forEach((t) => {
     const on = (t.dataset.id || null) === S.params.presetId;
     t.classList.toggle('on', on);
     t.setAttribute('aria-pressed', String(on));
@@ -531,6 +545,18 @@ function paintStrip() {
     const { key, hit } = thumbCache(id);
     if (hit) { canvas.getContext('2d').drawImage(hit, 0, 0); pic.classList.remove('wait'); } else queue.push({ id, canvas, pic, key });
   };
+  const diagRow = $('#diagRow');
+  if (diagRow && S.diag) { diagRow.innerHTML = ''; diagRow.append(el('span', { class: 'ai-mark', 'aria-hidden': 'true' }, '✦'), el('strong', {}, S.diag.summary), el('span', {}, 'Toca una sugerencia')); }
+  if (S.filter === 'todos' && !S.query && S.diag) {
+    S.diag.fixes.forEach((f) => {
+      const canvas = el('canvas', { width: tw, height: th, 'aria-hidden': 'true' });
+      const pic = el('span', { class: 'thumb-pic wait' }, canvas, el('i', { class: 'fix-badge', 'aria-hidden': 'true' }, '✦'));
+      strip.append(el('button', { class: 'thumb fix', 'data-fix': f.id, 'aria-label': `Sugerencia: ${f.name}. ${f.issue}`, 'aria-pressed': 'false', onclick: () => toggleFix(f) }, pic, el('span', { class: 'thumb-name' }, f.name)));
+      const key = `fix|${S.baseId}|${S.params.auto.amount}|${f.id}`, hit = S.stripCache.get(key);
+      if (hit) { canvas.getContext('2d').drawImage(hit, 0, 0); pic.classList.remove('wait'); } else queue.unshift({ fix: f, canvas, pic, key });
+    });
+    strip.append(el('span', { class: 'strip-sep', 'aria-hidden': 'true' }));
+  }
   addThumb(null, 'Sin look');
   visiblePresets().forEach((p) => addThumb(p.id, p.name));
   markStrip();
@@ -539,12 +565,12 @@ function paintStrip() {
 async function generateThumbs(queue, tw, th) {
   const token = (S.thumbToken = {});
   const t0 = performance.now();
-  for (const { id, canvas, pic, key } of queue) {
+  for (const { id, fix, canvas, pic, key } of queue) {
     if (S.thumbToken !== token) return;
     try {
       if (id) await ensureLut(id);
       if (S.thumbToken !== token) return;
-      const p = id ? paramsFor(id) : { ...Core.defaultParams(), auto: S.params.auto };
+      const p = id ? paramsFor(id) : { ...Core.defaultParams(), auto: S.params.auto, fix: fix ? fix.fix : null };
       R.render({ src: { tex: S.thumbTex, w: S.thumbC.width, h: S.thumbC.height }, lowSrc: { tex: S.thumbTex }, params: p, lut: getLut(id), intensity: id ? 100 : 0, outW: tw, outH: th, pxW: tw, pxH: th, dither: false, atmos: S.atmos, maskXf: Core.IDENTITY_XF });
       canvas.getContext('2d').drawImage(R.canvas, 0, 0, canvas.width, canvas.height);
       const copy = document.createElement('canvas');
@@ -719,7 +745,7 @@ function sliderRow(id, label, min, max, step, get, set, unit = '') {
 function sectionModified(tab) {
   const d = Core.defaultParams(), p = S.params;
   const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
-  if (tab === 'auto') return !!p.auto.amount;
+  if (tab === 'auto') return !!p.auto.amount || !!p.fix;
   if (tab === 'luz') return !same(p.light, d.light);
   if (tab === 'color') return !same(p.color, d.color);
   if (tab === 'curvas') return !same(p.curves, d.curves);
@@ -743,12 +769,15 @@ function paintPanel() {
   const head = (title, fn) => el('div', { class: 'panel-head' }, el('h3', {}, title), resetBtn(t, fn));
   if (t === 'auto') {
     const info = S.autoInfo, a = S.params.auto;
-    panel.append(el('div', { class: 'auto-badge' }, info.label), el('p', { class: 'note' }, `Escena: ${info.scene.label.toLowerCase()}. ${info.scene.why}.`));
+    panel.append(el('div', { class: 'auto-badge' }, info.label));
+    const fixBox = el('div', { class: 'seg' });
+    S.diag.fixes.forEach((f) => fixBox.append(el('button', { class: S.params.fixId === f.id ? 'on' : '', 'aria-pressed': String(S.params.fixId === f.id), onclick: () => { toggleFix(f); paintPanel(); } }, `✦ ${f.name}`)));
+    panel.append(fixBox);
     panel.append(el('ul', { class: 'auto-list' }, info.notes.map((n) => el('li', {}, n))));
     panel.append(sliderRow('auto-amount', 'Fuerza del autoajuste', 0, 100, 1, Object.assign(() => a.amount, { def: 100 }), (v) => { S.params.auto.amount = v; S.stripCache.clear(); }, ' %'));
     const amt = $('#auto-amount', panel);
     amt.addEventListener('change', () => paintStrip());
-    panel.append(el('p', { class: 'note' }, 'El autoajuste corrige la foto antes de aplicar el look. Bájalo a 0 % para ver el look sobre la foto sin corregir.'));
+    panel.append(el('p', { class: 'note' }, `Escena: ${info.scene.label.toLowerCase()}. ${info.scene.why}.`));
   } else if (SECTIONS[t]) {
     const s = SECTIONS[t];
     panel.append(head(s.title, () => { if (t === 'color') { const h = d.color; S.params.color = h; } else S.params[s.key] = d[s.key]; }));
@@ -829,6 +858,39 @@ function paintPanel() {
     panel.append(el('label', { class: 'check' }, el('input', { type: 'checkbox', checked: S.showMask === 4, id: 'skinShow', onchange: (e) => { S.showMask = e.target.checked ? 4 : 0; requestRender(false); } }), 'Ver la piel detectada'));
   }
   panel.scrollTop = top;
+  compactPanel(panel, t);
+}
+const COMPACT_TABS = new Set(['luz', 'color', 'etalonaje', 'detalle', 'efectos']);
+/* En el teléfono: un solo deslizador a la vez para que la foto conserve el espacio */
+function compactPanel(panel, t) {
+  const st = $('#studio');
+  if (st) st.dataset.sheet = t === 'curvas' ? 'tall' : COMPACT_TABS.has(t) ? 'compact' : 'mid';
+  panel.classList.remove('compact');
+  if (innerWidth > 900 || !COMPACT_TABS.has(t)) return;
+  const ctls = [...panel.querySelectorAll('.ctl')];
+  if (!ctls.length) return;
+  panel.classList.add('compact');
+  S.activeTool = S.activeTool || {};
+  const ids = ctls.map((c) => c.querySelector('input').id);
+  if (!ids.includes(S.activeTool[t])) S.activeTool[t] = ids[0];
+  const pills = el('div', { class: 'tool-pills', role: 'group', 'aria-label': 'Ajuste' });
+  const bands = panel.querySelector('.hsl-bands');
+  const show = () => {
+    ctls.forEach((c) => { c.hidden = c.querySelector('input').id !== S.activeTool[t]; });
+    pills.querySelectorAll('.tool').forEach((b) => { const on = b.dataset.tool === S.activeTool[t]; b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)); });
+    if (bands) bands.hidden = !S.activeTool[t].startsWith('hsl-');
+  };
+  ctls.forEach((c) => {
+    const id = c.querySelector('input').id;
+    let label = c.querySelector('label').textContent;
+    if (t === 'etalonaje') label = `${id.includes('shadows') ? 'Sombras' : id.includes('mids') ? 'Medios' : 'Luces'} ${id.endsWith('-h') ? 'tono' : 'cantidad'}`;
+    if (id.startsWith('hsl-')) label = `HSL ${label.toLowerCase()}`;
+    pills.append(el('button', { class: 'tool', 'data-tool': id, onclick: () => { S.activeTool[t] = id; show(); } }, label));
+  });
+  const reset = panel.querySelector('.panel-head .btn');
+  if (reset) { reset.classList.add('tool-reset'); pills.append(reset); }
+  panel.prepend(pills);
+  show();
 }
 async function runSegment(btn) {
   btn.disabled = true; btn.textContent = 'Descargando modelo…';
@@ -1020,7 +1082,6 @@ function layoutCrop() {
   if (info) { const o = Core.geoOutputSize(S.params.geo, S.W, S.H); info.textContent = `Resultado: ${o.w}×${o.h} px`; }
 }
 /* ---------- Estudio: foto en grande, deslizar, instrucciones y herramientas ---------- */
-const AI_CHIPS = ['Quita lo que distrae del fondo', 'Agrega un pato', 'Ponme en París', 'Cambia el cielo por un atardecer', 'Quita a las personas de atrás', 'Hazla de noche'];
 function screenEditor(host) {
   const canvas = el('canvas', { id: 'edCanvas', style: 'view-transition-name:hero', role: 'img', 'aria-label': 'Foto en edición' });
   const stage = el('div', { class: 'stage', id: 'stage', tabindex: '0', 'aria-label': 'Foto. Desliza para cambiar de look, mantén pulsado para ver el original y usa las flechas del teclado.' }, canvas,
@@ -1033,18 +1094,9 @@ function screenEditor(host) {
     el('button', { class: 'nav r', 'aria-label': 'Look siguiente', onclick: () => stepLook(1) }, '›'),
     el('div', { class: 'stage-tools' },
       el('button', { class: 'glass', id: 'bSplit', html: I.split, 'aria-label': 'Antes y después', title: 'Antes y después (\\)', onclick: toggleSplit }),
-      el('button', { class: 'glass', id: 'bFull', html: I.fit, 'aria-label': 'Pantalla completa', title: 'Pantalla completa (F)', onclick: toggleImmersive })),
-    el('div', { id: 'aiBusy', class: 'ai-busy', hidden: true }, el('div', { class: 'ai-busy-card', role: 'status' }, el('strong', { id: 'aiBusyText' }, 'La IA está editando tu foto…'), el('button', { class: 'btn small', id: 'bAiCancel', onclick: cancelAiEdit }, 'Cancelar'))));
+      el('button', { class: 'glass', id: 'bFull', html: I.fit, 'aria-label': 'Pantalla completa', title: 'Pantalla completa (F)', onclick: toggleImmersive })));
   const cropBox = el('div', { class: 'crop', id: 'cropBox', hidden: true }, ...['nw', 'n', 'ne', 'w', 'e', 'sw', 's', 'se'].map((h) => el('i', { 'data-h': h, style: handleStyle(h) })));
   stage.append(cropBox);
-
-  const input = el('input', { id: 'aiInput', type: 'text', autocomplete: 'off', placeholder: 'Pídele algo: quita el árbol, agrega un pato, ponme en París…', 'aria-label': 'Instrucción para editar la foto con IA', onkeydown: (e) => { if (e.key === 'Enter' && input.value.trim()) { e.preventDefault(); runAiEdit(input.value); } } });
-  const aiBar = el('form', { class: 'ai-bar', onsubmit: (e) => { e.preventDefault(); if (input.value.trim()) runAiEdit(input.value); else input.focus(); } },
-    el('span', { class: 'ai-mark', 'aria-hidden': 'true' }, '✦'), input,
-    el('button', { class: 'icon', type: 'button', html: I.gear, 'aria-label': 'Configurar la IA', title: 'Configurar la IA', onclick: () => openAiSetup() }),
-    el('button', { class: 'ai-send', type: 'submit', id: 'aiSend', 'aria-label': 'Enviar instrucción' }, 'Editar'));
-  const chipsAi = el('div', { class: 'ai-chips' }, AI_CHIPS.map((t) => el('button', { class: 'chip', type: 'button', onmousedown: (e) => e.preventDefault(), onclick: () => { input.value = t; input.focus(); } }, t)));
-  const versions = el('div', { class: 'versions', id: 'versions' });
 
   const stripChips = el('div', { class: 'chips', id: 'stripChips' });
   const paintChips = () => { stripChips.innerHTML = ''; stripChips.append(...chipRow(() => { paintChips(); paintStrip(); })); };
@@ -1055,24 +1107,24 @@ function screenEditor(host) {
   const intensity = el('div', { id: 'intensityRow', class: 'intensity' },
     el('strong', { id: 'lookNow' }), range, el('output', { id: 'lookIntensityOut', for: 'lookIntensity' }),
     el('button', { class: 'icon', id: 'lookFav', html: I.star, 'aria-label': 'Favorito', onclick: (e) => { if (S.params.presetId) toggleFav(S.params.presetId, e.currentTarget); } }));
-  const strip = el('div', { class: 'strip', id: 'strip', role: 'group', 'aria-label': 'Looks' });
-  const stripWrap = el('div', { class: 'strip-wrap' }, intensity, stripChips, strip);
+  const diag = el('div', { class: 'diag', id: 'diagRow' });
+  const strip = el('div', { class: 'strip', id: 'strip', role: 'group', 'aria-label': 'Sugerencias y looks' });
+  const stripWrap = el('div', { class: 'strip-wrap' }, intensity, diag, stripChips, strip);
 
   const dock = el('nav', { class: 'dock', 'aria-label': 'Herramientas' },
-    [['looks', 'Looks'], ['ia', 'IA'], ['auto', 'Auto'], ['ajustes', 'Ajustes'], ['recortar', 'Recortar']].map(([id, label]) => el('button', { class: 'dock-btn', 'data-mode': id, onclick: () => setMode(id) }, label)));
+    [['looks', 'Looks'], ['auto', 'Auto'], ['ajustes', 'Ajustes'], ['recortar', 'Recortar']].map(([id, label]) => el('button', { class: 'dock-btn', 'data-mode': id, onclick: () => setMode(id) }, label)));
 
   const tabs = el('div', { class: 'tabs', role: 'tablist', 'aria-label': 'Secciones de edición' }, TABS.map(([id, label]) => el('button', { class: 'tab', role: 'tab', 'data-tab': id, onclick: () => setTab(id) }, label)));
   const side = el('aside', { class: 'side' },
     el('div', { class: 'side-head' }, el('canvas', { class: 'hist', id: 'edHist', role: 'img', 'aria-label': 'Histograma en vivo' })), tabs, el('div', { class: 'panel', id: 'panel', role: 'tabpanel' }));
   const studio = el('div', { class: 'studio', id: 'studio', 'data-mode': S.mode || 'looks' },
-    el('section', { class: 'st-main' }, stage, el('div', { class: 'ai-wrap' }, versions, aiBar, chipsAi), stripWrap, dock), side);
+    el('section', { class: 'st-main' }, stage, stripWrap, dock), side);
   host.append(studio);
   bindStage(stage);
   bindCrop(cropBox);
   paintChips();
   paintPanel();
   paintHistoryButtons();
-  paintVersions();
   paintIntensity();
   paintDock();
   paintStrip();
@@ -1095,7 +1147,6 @@ function setMode(id) {
   else if (id === 'ajustes') setTab(S.tab === 'auto' || S.tab === 'geometria' ? 'luz' : S.tab);
   else if (S.tab === 'geometria') setTab('luz');
   paintDock();
-  if (id === 'ia') { const i = $('#aiInput'); if (i) i.focus(); }
   requestRender(false);
 }
 function paintDock() { document.querySelectorAll('.dock-btn').forEach((b) => { const on = b.dataset.mode === (S.mode || 'looks'); b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)); }); }
@@ -1209,6 +1260,8 @@ function bindCrop(box) {
   box.addEventListener('pointerup', end);
   box.addEventListener('pointercancel', end);
 }
+let lastCompact = innerWidth <= 900;
+window.addEventListener('resize', () => { const now = innerWidth <= 900; if (now !== lastCompact && S.step === 'editar') { lastCompact = now; paintPanel(); } });
 window.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && document.documentElement.classList.contains('immersive')) { toggleImmersive(); return; }
   if (e.target.matches && e.target.matches('input[type=text],input[type=search],input[type=password],select')) return;
@@ -1222,131 +1275,6 @@ window.addEventListener('keydown', (e) => {
   else if (e.key === '-') zoomBy(1 / 1.3);
   else if (e.key === '0') { S.zoom = 1; S.panX = S.panY = 0; requestRender(false); }
 });
-
-/* ---------- Edición con instrucciones ---------- */
-const AI_CFG_DEFAULT = { key: '', remember: false, size: '2K', model: 'gemini-nano-banana-2.1', consent: false };
-function aiConfig() {
-  if (S.aiCfg) return S.aiCfg;
-  S.aiCfg = { ...AI_CFG_DEFAULT };
-  try { const raw = localStorage.getItem('lumen.ai'); if (raw) S.aiCfg = { ...S.aiCfg, ...JSON.parse(raw), remember: true }; } catch { /* opcional */ }
-  return S.aiCfg;
-}
-function saveAiConfig() {
-  const c = aiConfig();
-  try { if (c.remember) localStorage.setItem('lumen.ai', JSON.stringify({ key: c.key, size: c.size, model: c.model, consent: c.consent })); else localStorage.removeItem('lumen.ai'); } catch { /* opcional */ }
-}
-const AI_PRICES = { '1K': 'US$0.034', '2K': 'US$0.050', '4K': 'US$0.113' };
-function openAiSetup(after) {
-  const c = aiConfig();
-  const key = el('input', { type: 'password', id: 'aiKey', value: c.key, autocomplete: 'off', spellcheck: 'false', placeholder: 'Pega aquí tu clave de Gemini' });
-  const size = el('select', { id: 'aiSize' }, Object.keys(AI_PRICES).map((s) => el('option', { value: s, selected: c.size === s }, `${s} · unos ${AI_PRICES[s]} por edición`)));
-  const model = el('input', { type: 'text', id: 'aiModel', value: c.model, spellcheck: 'false' });
-  const rem = el('input', { type: 'checkbox', id: 'aiRemember', checked: c.remember });
-  const msg = el('p', { class: 'note warn', role: 'alert', hidden: true });
-  const d = el('dialog', { id: 'aiSetup' }, el('form', { class: 'dlg', method: 'dialog', onsubmit: (e) => {
-    e.preventDefault();
-    if (!key.value.trim()) { msg.textContent = 'Pega tu clave para continuar.'; msg.hidden = false; key.focus(); return; }
-    Object.assign(c, { key: key.value.trim(), size: size.value, model: model.value.trim() || AI_CFG_DEFAULT.model, remember: rem.checked, consent: true });
-    saveAiConfig();
-    d.close();
-    if (after) after();
-  } },
-  el('h2', {}, 'Activa la edición con IA'),
-  el('p', {}, 'Quitar un árbol, agregar un pato o ponerte en París requiere un modelo generativo que no cabe en el navegador. Por eso esta función usa Gemini, de Google, con tu propia clave.'),
-  el('ul', {},
-    el('li', {}, el('strong', {}, 'Tu foto sale de este dispositivo: '), 'cada vez que pulses Editar se envían a Google la foto y tu instrucción. Los looks, el autoajuste y los demás ajustes siguen funcionando sin enviar nada.'),
-    el('li', {}, el('strong', {}, 'Tiene costo: '), 'Google no ofrece plan gratuito para estos modelos. Los precios son los que Google publica para Nano Banana 2.1 y pueden cambiar.'),
-    el('li', {}, el('strong', {}, 'Tu clave: '), 'solo se envía a Google. Si no marcas Recordar, se borra al cerrar la pestaña.')),
-  el('p', {}, 'Crea la clave en ', el('a', { href: 'https://aistudio.google.com/apikey', target: '_blank', rel: 'noopener' }, 'Google AI Studio'), ' y activa la facturación de tu proyecto.'),
-  el('div', { class: 'field' }, el('label', { for: 'aiKey' }, 'Clave de la API de Gemini'), key),
-  el('div', { class: 'field' }, el('label', { for: 'aiSize' }, 'Resolución del resultado'), size),
-  el('details', {}, el('summary', {}, 'Avanzado'), el('div', { class: 'field' }, el('label', { for: 'aiModel' }, 'Modelo'), model)),
-  el('label', { class: 'check' }, rem, 'Recordar la clave en este navegador. Actívalo solo si nadie más usa este equipo.'),
-  msg,
-  el('div', { class: 'row' }, el('button', { class: 'btn primary', type: 'submit', id: 'aiSave' }, 'Aceptar y continuar'), el('button', { class: 'btn', type: 'button', onclick: () => d.close() }, 'Ahora no'))));
-  document.body.append(d);
-  d.addEventListener('close', () => d.remove());
-  d.showModal();
-}
-function cancelAiEdit() { if (S.aiAbort) S.aiAbort.abort(); }
-function bytesToB64(u8) { let s = ''; for (let i = 0; i < u8.length; i += 32768) s += String.fromCharCode.apply(null, u8.subarray(i, i + 32768)); return btoa(s); }
-async function aiRequest(cfg, b64, instruction, aspect, signal) {
-  const headers = { 'Content-Type': 'application/json', 'x-goog-api-key': cfg.key };
-  const prompt = Core.buildEditPrompt(instruction);
-  const post = (url, body) => fetch(url, { method: 'POST', headers, body: JSON.stringify(body), signal });
-  let res = await post('https://generativelanguage.googleapis.com/v1beta/interactions', {
-    model: cfg.model,
-    input: [{ type: 'text', text: prompt }, { type: 'image', mime_type: 'image/jpeg', data: b64 }],
-    response_format: { type: 'image', mime_type: 'image/jpeg', aspect_ratio: aspect, image_size: cfg.size },
-  });
-  if (res.status === 404) {
-    res = await post(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent('gemini-3.1-flash-image')}:generateContent`, {
-      contents: [{ parts: [{ text: prompt }, { inline_data: { mime_type: 'image/jpeg', data: b64 } }] }],
-      generationConfig: { responseModalities: ['IMAGE'], imageConfig: { aspectRatio: aspect, imageSize: cfg.size } },
-    });
-  }
-  let body = null;
-  try { body = await res.json(); } catch { /* sin cuerpo JSON */ }
-  if (!res.ok) throw new Error(Core.explainGeminiError(res.status, body));
-  return body;
-}
-async function runAiEdit(rawInstruction) {
-  const instruction = rawInstruction.trim();
-  if (!instruction || S.aiBusy) return;
-  const cfg = aiConfig();
-  if (!cfg.key || !cfg.consent) { openAiSetup(() => runAiEdit(instruction)); return; }
-  const busy = $('#aiBusy'), input = $('#aiInput');
-  S.aiBusy = true;
-  S.aiAbort = new AbortController();
-  busy.hidden = false;
-  $('#aiBusyText').textContent = `«${instruction}»`;
-  $('#aiSend').disabled = true;
-  try {
-    const long = { '1K': 1536, '2K': 2048, '4K': 3072 }[cfg.size] || 2048;
-    const c = scaleCanvas(S.bmp, S.W, S.H, long);
-    const blob = await new Promise((res) => c.toBlob(res, 'image/jpeg', 0.93));
-    const b64 = bytesToB64(new Uint8Array(await blob.arrayBuffer()));
-    const body = await aiRequest(cfg, b64, instruction, Core.nearestAspect(S.W, S.H), S.aiAbort.signal);
-    const parsed = Core.parseGeminiImage(body);
-    if (!parsed.image) {
-      if (parsed.block) throw new Error('Google no quiso hacer esa edición por sus reglas de seguridad. Prueba con otra instrucción.');
-      throw new Error(parsed.text ? `Google no devolvió una imagen. Respondió: «${parsed.text.slice(0, 180)}»` : 'Google no devolvió una imagen. Reformula la instrucción y vuelve a intentar.');
-    }
-    const out = new Blob([b64ToBytes(parsed.image.data)], { type: parsed.image.mime });
-    const bmp = await createImageBitmap(out, { premultiplyAlpha: 'none', imageOrientation: 'from-image' });
-    S.versions = S.versions.slice(0, S.vi + 1);
-    S.versions.push({ bmp, blob: out, label: instruction });
-    S.vi = S.versions.length - 1;
-    await useVersion(S.vi);
-    if (input) input.value = '';
-    showLookPill(null, 'Edición lista');
-    haptic();
-  } catch (e) {
-    if (e.name === 'AbortError') toast('Edición cancelada. Tu foto no cambió.');
-    else if (e instanceof TypeError) toast(location.protocol === 'file:' ? 'No se pudo conectar con Google. Revisa tu internet. Si sigue fallando, tu navegador puede estar bloqueando la petición desde un archivo local: abre la app desde un servidor local, como http://localhost.' : 'No se pudo conectar con Google. Revisa tu conexión a internet.', 'err');
-    else toast(e.message, 'err');
-  } finally {
-    S.aiBusy = false;
-    S.aiAbort = null;
-    const b = $('#aiBusy'); if (b) b.hidden = true;
-    const send = $('#aiSend'); if (send) send.disabled = false;
-  }
-}
-async function useVersion(i) {
-  S.vi = i;
-  const v = S.versions[i];
-  applyBase(v.bmp, v.blob, i > 0);
-  paintVersions();
-  if (S.step === 'editar') { paintStrip(); paintPanel(); requestRender(false); }
-}
-function paintVersions() {
-  const box = $('#versions');
-  if (!box) return;
-  box.innerHTML = '';
-  box.hidden = S.versions.length < 2;
-  if (box.hidden) return;
-  S.versions.forEach((v, i) => box.append(el('button', { class: 'chip' + (i === S.vi ? ' on' : ''), 'aria-pressed': String(i === S.vi), onclick: () => useVersion(i) }, i === 0 ? 'Original' : v.label)));
-}
 
 /* ---------- Render final ---------- */
 function paramsKey() { return JSON.stringify([S.params, S.enh.src ? S.enh.id : 0, S.enh.mode]); }
@@ -1403,11 +1331,21 @@ async function renderFinal(params, opt = {}) {
   R.canvas.width = 4; R.canvas.height = 4;
   return out;
 }
+/* Nitidez de salida: se aplica al final para que el resultado quede limpio y sin halos */
+async function finishSharp(canvas) {
+  const amount = S.enh && S.enh.cas;
+  if (!amount) return canvas;
+  const x = canvas.getContext('2d', { willReadFrequently: true });
+  const data = x.getImageData(0, 0, canvas.width, canvas.height);
+  const out = await sharpenWorker(data.data, canvas.width, canvas.height, amount);
+  x.putImageData(new ImageData(out, canvas.width, canvas.height), 0, 0);
+  return canvas;
+}
 async function ensureFinal() {
   syncEnhGeo();
   const key = paramsKey();
   if (S.finalC && S.finalKey === key) return S.finalC;
-  S.finalC = await renderFinal(S.params);
+  S.finalC = await finishSharp(await renderFinal(S.params));
   S.finalKey = key;
   return S.finalC;
 }
@@ -1426,15 +1364,21 @@ async function neutralCrop() {
 
 /* ---------- Mejorar ---------- */
 const QUALITY_OPTS = [
-  ['original', 'Original', 'La misma resolución que subiste, sin IA.'],
-  ['detail', 'Más detalle', 'Mismas dimensiones. La IA reconstruye detalle fino.'],
-  ['1080p', '1080p', 'Lado largo de 1920 px, sin deformar.'],
-  ['4k', '4K', 'Lado largo de 3840 px, sin deformar.'],
+  ['original', 'Original', 'Tu foto tal como la subiste, con tus ajustes.'],
+  ['detail', 'Máxima nitidez', 'Mismo tamaño, con más definición y menos ruido.'],
+  ['1080p', '1080p', 'Lado largo de 1920 px. Ideal para redes.'],
+  ['4k', '4K', 'Lado largo de 3840 px. La mayor calidad.'],
 ];
+function planText(plan, w, h) {
+  if (plan.kind === 'none') return 'Se conserva la resolución que subiste.';
+  if (plan.kind === 'resize') return `Tu foto mide ${w}×${h} px y sobra resolución. La llevo a ${plan.w}×${plan.h} con reescalado de alta calidad y nitidez limpia.`;
+  if (plan.kind === 'fusion') return `Combino tu foto de ${w}×${h} px con reconstrucción de detalle. Se quita el ruido y se conserva la textura real.`;
+  return `Tu foto mide ${w}×${h} px. Reconstruyo el detalle hasta ${plan.w}×${plan.h} con la IA incluida en la app.`;
+}
 function screenEnhance(host) {
   syncEnhGeo();
   const crop = Core.geoOutputSize(S.params.geo, S.W, S.H);
-  const ui = S.enhUI = S.enhUI && S.enhUI.mode ? S.enhUI : { mode: S.enh.mode || 'original', engine: S.enh.engine === 'classic' ? 'fast' : S.enh.engine };
+  const ui = S.enhUI = S.enhUI && S.enhUI.mode ? S.enhUI : { mode: S.enh.mode || 'original' };
   const opts = el('div', { class: 'opts', role: 'radiogroup', 'aria-label': 'Calidad final' });
   const paintOpts = () => {
     opts.innerHTML = '';
@@ -1447,33 +1391,9 @@ function screenEnhance(host) {
   const status = el('div', { style: 'display:contents' });
   const paintEngine = () => {
     engineBox.innerHTML = ''; status.innerHTML = '';
-    const t = Core.targetDims(crop.w, crop.h, ui.mode);
-    if (ui.mode === 'original') {
-      engineBox.append(el('p', { class: 'note' }, 'Se conserva la calidad que subiste, con tu preset y tus ajustes.'));
-      engineBox.append(el('button', { class: 'btn primary', id: 'bApply', onclick: () => applyEnhance(ui, status) }, 'Usar esta calidad'));
-      return;
-    }
-    if (t.downscale) {
-      engineBox.append(el('p', { class: 'note warn' }, `Tu foto mide ${crop.w}×${crop.h} px y supera ${ui.mode === '4k' ? '4K' : ui.mode}. Se reducirá con Lanczos, sin IA.`));
-      engineBox.append(el('button', { class: 'btn primary', id: 'bApply', onclick: () => applyEnhance({ ...ui, engine: 'classic' }, status) }, `Reducir a ${t.w}×${t.h}`));
-      return;
-    }
-    const seg = el('div', { class: 'opts', role: 'radiogroup', 'aria-label': 'Motor de mejora' });
-    const engines = [['fast', 'IA rápida', `realesr-general-x4v3 · ≈ ${AI_MODELS.fast.mb} MB`], ['max', 'IA máxima calidad', `RealESRGAN_x4plus · ≈ ${AI_MODELS.max.mb} MB`]];
-    if (ui.mode !== 'detail') engines.push(['classic', 'Clásico, sin IA', 'Lanczos. Más rápido, no inventa detalle.']);
-    if (ui.mode === 'detail' && ui.engine === 'classic') ui.engine = 'fast';
-    engines.forEach(([id, label, desc]) => seg.append(el('button', { class: 'opt' + (ui.engine === id ? ' on' : ''), role: 'radio', 'aria-checked': String(ui.engine === id), onclick: () => { ui.engine = id; paintEngine(); } }, el('strong', {}, label), el('small', {}, desc))));
-    engineBox.append(seg);
-    if (ui.engine === 'classic') {
-      engineBox.append(el('button', { class: 'btn primary', id: 'bApply', onclick: () => applyEnhance(ui, status) }, `Escalar a ${t.w}×${t.h} con Lanczos`));
-    } else {
-      const m = AI_MODELS[ui.engine];
-      engineBox.append(el('button', { class: 'btn primary', id: 'bApply', onclick: async () => {
-        const cached = await IDB.get('model:' + m.id);
-        if (cached || S.localModel && S.localModel.key === ui.engine) applyEnhance(ui, status);
-        else askConsent(ui, status, m);
-      } }, `Mejorar con ${m.label.toLowerCase()}`));
-    }
+    const plan = Core.qualityPlan(crop.w, crop.h, ui.mode);
+    engineBox.append(el('p', { class: 'note' }, planText(plan, crop.w, crop.h)));
+    engineBox.append(el('button', { class: 'btn primary', id: 'bApply', onclick: () => applyEnhance(ui, status) }, ui.mode === 'original' ? 'Usar esta calidad' : `Mejorar a ${plan.w}×${plan.h}`));
   };
   const canvasL = el('canvas', { id: 'cmpL', role: 'img', 'aria-label': 'Original' });
   const canvasR = el('canvas', { id: 'cmpR', role: 'img', 'aria-label': 'Resultado' });
@@ -1526,7 +1446,7 @@ function screenEnhance(host) {
     el('span', { class: 'sep' }), el('span', { class: 'hint', id: 'cmpLabel' }, ''));
   const cont = el('button', { class: 'btn primary', id: 'bToDownload', onclick: () => go('descargar') }, 'Continuar a Guardar →');
   host.append(el('div', { class: 'enh' },
-    el('div', { class: 'enh-side' }, el('h2', {}, 'Elige la calidad final'), el('p', { class: 'note' }, `Tu recorte mide ${crop.w}×${crop.h} px.`), opts, engineBox, status, el('div', { class: 'spacer' }), cont),
+    el('div', { class: 'enh-side' }, el('h2', {}, 'Elige la calidad final'), el('p', { class: 'note' }, 'Gratis, sin internet y sin subir tu foto.'), opts, engineBox, status, el('div', { class: 'spacer' }), cont),
     el('div', { class: 'cmpview' }, toolbar, panes)));
   paintOpts(); paintEngine();
   new ResizeObserver(() => drawCmp()).observe(panes);
@@ -1544,77 +1464,79 @@ function setCmpLabel() {
   if (t && S.finalC) t.textContent = `Resultado · ${S.finalC.width}×${S.finalC.height} · ${S.enh.label}`;
   if (l) l.textContent = 'Arrastra y haz zoom: ambos lados se mueven juntos.';
 }
-function askConsent(ui, status, m) {
-  status.innerHTML = '';
-  const file = el('input', { type: 'file', accept: '.onnx', hidden: true, onchange: async (e) => {
-    const f = e.target.files[0];
-    if (!f) return;
-    S.localModel = { key: ui.engine, buffer: await f.arrayBuffer(), name: f.name };
-    applyEnhance(ui, status);
-  } });
-  status.append(el('div', { class: 'panelbox', role: 'alertdialog', 'aria-label': 'Confirmar descarga' },
-    el('strong', {}, `Descargar ${m.id}`),
-    el('p', { class: 'note' }, `Se descargarán ≈ ${m.mb} MB del modelo desde Hugging Face y ≈ 25 MB de ONNX Runtime desde jsDelivr. Solo se descargan una vez por navegador. Tu foto no sale de este dispositivo.`),
-    el('div', { class: 'row' }, el('button', { class: 'btn small primary', id: 'bConsent', onclick: () => applyEnhance(ui, status) }, 'Descargar y mejorar'), el('button', { class: 'btn small', onclick: () => file.click() }, 'Usar mi archivo .onnx'), el('button', { class: 'btn small link', onclick: () => { status.innerHTML = ''; } }, 'Cancelar')), file));
-}
 function getRGBA(canvas) { return canvas.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, canvas.width, canvas.height).data; }
 async function canvasToBitmap(rgba, w, h) {
   const c = document.createElement('canvas');
   c.width = w; c.height = h;
   c.getContext('2d').putImageData(new ImageData(rgba, w, h), 0, 0);
-  const b = await createImageBitmap(c, { premultiplyAlpha: 'none', colorSpaceConversion: 'none' });
-  return b;
+  return createImageBitmap(c, { premultiplyAlpha: 'none', colorSpaceConversion: 'none' });
+}
+async function rebuildDetail(left, plan, signal, prog) {
+  const w = left.width, h = left.height;
+  const base = await lanczosWorker(getRGBA(left), w, h, plan.w, plan.h);
+  let input = getRGBA(left), iw = w, ih = h;
+  const shrink = async (k) => {
+    const nw = Math.max(16, Math.round(iw * k)), nh = Math.max(16, Math.round(ih * k));
+    input = await lanczosWorker(input, iw, ih, nw, nh); iw = nw; ih = nh;
+  };
+  if (plan.input < 1) await shrink(plan.input);
+  const attempt = async (engine) => {
+    if (engine.scale < 1) await shrink(engine.scale);
+    const name = engine.ep === 'webgpu' ? 'GPU' : 'procesador';
+    return aiUpscale({ rgba: input, w: iw, h: ih, tw: plan.w, th: plan.h, tile: engine.tile, signal, onProgress: (f, eta) => prog(f, `Reconstruyendo detalle con ${name}. Falta ${Core.fmtTime(eta)}`) });
+  };
+  let engine = await chooseEngine(input, iw, ih, (t) => prog(0.01, t));
+  let ai;
+  try { ai = await attempt(engine); } catch (e) {
+    if (e.cancelled || e.memory || signal.cancelled || engine.key === 'fast') throw e;
+    aiPool.stop();
+    prog(0, 'La GPU se quedó corta. Sigo con el motor rápido…');
+    let ep;
+    try { ep = await startModel('fast', false); } catch { aiPool.stop(); ep = await startModel('fast', true); }
+    engine = { key: 'fast', ep, tile: ep === 'webgpu' ? 256 : 128, scale: 1 };
+    ai = await attempt(engine);
+  }
+  const rgba = await fuseWorker(ai, base, plan.mix);
+  return { rgba, label: `${MODELS[engine.key].label}, en tu teléfono` };
 }
 async function applyEnhance(ui, status) {
   if (S.enhBusy) return;
   const bar = el('span', {}), lbl = el('p', { class: 'note', 'aria-live': 'polite' }, 'Preparando…');
   const signal = { cancelled: false };
-  const cancelBtn = el('button', { class: 'btn small', id: 'bCancel', onclick: () => { signal.cancelled = true; aiPool.stop(); classicPool.stop(); S.aiReady = null; } }, 'Cancelar');
+  const cancelBtn = el('button', { class: 'btn small', id: 'bCancel', onclick: () => { signal.cancelled = true; aiPool.stop(); classicPool.stop(); } }, 'Cancelar');
   status.innerHTML = '';
-  const box = el('div', { class: 'panelbox' }, el('strong', {}, 'Procesando'), el('div', { class: 'bar-p', role: 'progressbar', 'aria-valuemin': 0, 'aria-valuemax': 100 }, bar), lbl, cancelBtn);
-  status.append(box);
+  status.append(el('div', { class: 'panelbox' }, el('strong', {}, 'Mejorando tu foto'), el('div', { class: 'bar-p', role: 'progressbar', 'aria-valuemin': 0, 'aria-valuemax': 100 }, bar), lbl, cancelBtn));
   const prog = (f, txt) => { bar.style.width = `${Math.round(f * 100)}%`; bar.parentElement.setAttribute('aria-valuenow', Math.round(f * 100)); if (txt) lbl.textContent = txt; };
   S.enhBusy = true;
   try {
     const left = await neutralCrop();
-    const w = left.width, h = left.height, t = Core.targetDims(w, h, ui.mode);
+    const w = left.width, h = left.height, plan = Core.qualityPlan(w, h, ui.mode);
     S.enh.left = left;
-    let result = null, label = 'Sin cambios', w2 = w, h2 = h, ep = '';
-    if (ui.mode === 'original') { result = null; }
-    else if (ui.engine === 'classic' || t.downscale) {
-      prog(0.2, `Calculando Lanczos a ${t.w}×${t.h}…`);
-      const rgba = await lanczosWorker(getRGBA(left), w, h, t.w, t.h);
-      result = await canvasToBitmap(rgba, t.w, t.h);
-      label = t.downscale ? 'Reducido con Lanczos, sin IA' : 'Lanczos, sin IA';
-      w2 = t.w; h2 = t.h;
-    } else {
-      const m = AI_MODELS[ui.engine];
-      if (S.aiReady !== ui.engine) {
-        let buffer;
-        if (S.localModel && S.localModel.key === ui.engine) { buffer = S.localModel.buffer.slice(0); } else {
-          prog(0, `Descargando ${m.id}…`);
-          const d = await downloadModel(ui.engine, (f, got) => prog(f * 0.8, `Descargando ${m.id}: ${Core.fmtBytes(got)}`));
-          buffer = d.buffer;
-        }
-        if (signal.cancelled) throw Object.assign(new Error('c'), { cancelled: true });
-        prog(0.85, 'Iniciando el motor de IA…');
-        const copy = buffer.slice(0);
-        const r = await aiPool.call({ type: 'ai-init', model: copy, bases: ORT_BASES }, [copy]);
-        S.aiReady = ui.engine; S.aiEP = r.ep;
+    let result = null, label = 'Sin cambios', cas = 0;
+    if (plan.kind === 'resize') {
+      prog(0.3, `Reescalando a ${plan.w}×${plan.h}…`);
+      result = await canvasToBitmap(await lanczosWorker(getRGBA(left), w, h, plan.w, plan.h), plan.w, plan.h);
+      label = 'Reescalado de alta calidad';
+      cas = plan.cas;
+    } else if (plan.kind !== 'none') {
+      try {
+        const r = await rebuildDetail(left, plan, signal, prog);
+        result = await canvasToBitmap(r.rgba, plan.w, plan.h);
+        label = r.label;
+        cas = plan.cas;
+      } catch (e) {
+        if (e.cancelled || signal.cancelled || e.memory) throw e;
+        prog(0.5, 'Usando el reescalado de alta calidad…');
+        result = await canvasToBitmap(await lanczosWorker(getRGBA(left), w, h, plan.w, plan.h), plan.w, plan.h);
+        label = 'Reescalado de alta calidad, sin IA';
+        cas = 0.55;
+        toast('El motor de IA no pudo iniciar en este dispositivo. Usé el reescalado de alta calidad.');
       }
-      ep = S.aiEP === 'webgpu' ? 'WebGPU' : 'CPU (WASM)';
-      const tile = S.aiEP === 'webgpu' ? 256 : 128;
-      prog(0, `Mejorando con ${ep}…`);
-      const rgba = await aiUpscale({ rgba: getRGBA(left), w, h, tw: t.w, th: t.h, tile, signal,
-        onProgress: (f, eta, i, n) => prog(f, `Mosaico ${i} de ${n} · ${ep} · falta ${Core.fmtTime(eta)}`) });
-      result = await canvasToBitmap(rgba, t.w, t.h);
-      label = `${m.id} · ${ep}`;
-      w2 = t.w; h2 = t.h;
     }
     if (S.enh.src) S.enh.src.close();
-    S.enh = { mode: ui.mode, engine: ui.engine, src: result, w: w2, h: h2, label, left, id: Date.now(), geoKey: JSON.stringify(S.params.geo) };
-        S.finalC = null;
-    prog(1, 'Aplicando tu preset y tus ajustes…');
+    S.enh = { mode: ui.mode, engine: 'local', src: result, w: plan.w, h: plan.h, label, left, cas, id: Date.now(), geoKey: JSON.stringify(S.params.geo) };
+    S.finalC = null;
+    prog(1, 'Aplicando tu look y tus ajustes…');
     await nextFrame();
     await ensureFinal();
     setCmpLabel();
@@ -1624,7 +1546,7 @@ async function applyEnhance(ui, status) {
     haptic();
   } catch (e) {
     status.innerHTML = '';
-    if (e.cancelled) { toast('Mejora cancelada. Tu edición sigue intacta.'); return; }
+    if (e.cancelled || signal.cancelled) { toast('Mejora cancelada. Tu edición sigue intacta.'); return; }
     status.append(el('div', { class: 'panelbox' }, el('strong', {}, 'No se pudo completar'), el('p', { class: 'note' }, e.message),
       ...(e.memory ? [el('button', { class: 'btn small', onclick: () => { S.enhUI.mode = '1080p'; renderScreen($('#main')); } }, 'Probar con 1080p')] : [])));
   } finally { S.enhBusy = false; }
@@ -1736,7 +1658,7 @@ async function screenDownload(host) {
         const p = S.presets.get(ids[i]);
         q.intensity = S.intensityById[ids[i]] !== undefined ? S.intensityById[ids[i]] : 100;
         q.recipe = p.fin || null;
-        const c = await renderFinal(q);
+        const c = await finishSharp(await renderFinal(q));
         let b = await encode(c, 'image/jpeg', S.quality / 100);
         b = await withExif(b, c.width, c.height);
         files.push({ name: Core.exportName(S.name, p.name, S.enh.mode, 'jpg'), bytes: new Uint8Array(await b.arrayBuffer()) });
@@ -1758,20 +1680,19 @@ function openCredits() {
     el('div', { class: 'dlg' },
       el('h2', {}, 'Créditos y licencias'),
       el('h3', {}, 'Looks'),
-      el('p', {}, 'Cada look usa una tabla de color real, reducida de su tamaño original a 49³ puntos, más un acabado de tono y color hecho para LUMEN PRO. No son copias de los filtros de Instagram ni de VSCO. Los nombres de película indican la emulación que busca la tabla y no implican relación con esas marcas.'),
+      el('p', {}, 'Cada look usa una tabla de color real, reducida a 49³ puntos, más un acabado de tono y color hecho para LUMEN PRO. Los looks de Móviles son interpretaciones del estilo de cada marca: no son perfiles oficiales de Apple, Xiaomi, Leica ni Google, ni tienen relación con esas empresas. Tampoco copian los filtros de Instagram o VSCO.'),
       el('div', { class: 'dlg-table', tabindex: '0' }, el('table', {},
         el('thead', {}, el('tr', {}, ['Look', 'Tabla de origen', 'Autor', 'Licencia'].map((h) => el('th', { scope: 'col' }, h)))),
         el('tbody', {}, LUTS.map((p) => el('tr', {}, [p.name, p.file.split('/').pop().replace('.png', ''), p.author, p.license].map((v) => el('td', {}, v))))))),
       el('p', {}, 'Las tablas de Stuart Sowerby no declaran licencia. Para publicar esta app, primero pídele permiso o quita esos looks.'),
-      el('h3', {}, 'Servicios que se usan solo si los activas'),
+      el('h3', {}, 'Motores incluidos'),
       el('ul', {},
-        el('li', {}, 'Edición con instrucciones: Gemini, de Google. Envía la foto y tu instrucción a Google. Los resultados llevan la marca de agua invisible SynthID.'),
-        el('li', {}, 'Mejora de resolución: Real-ESRGAN, de Xintao Wang y colaboradores, BSD-3-Clause. Conversión a ONNX de relax123666 en Hugging Face. Corre en tu dispositivo.'),
-        el('li', {}, `ONNX Runtime Web ${ORT_VERSION}, de Microsoft: MIT. MediaPipe Tasks Vision ${MP_VERSION}, de Google: Apache-2.0. heic2any: MIT.`)),
+        el('li', {}, 'Real-ESRGAN, de Xintao Wang y colaboradores: BSD-3-Clause.'),
+        el('li', {}, 'ONNX Runtime Web, de Microsoft: MIT. MediaPipe Tasks Vision, de Google: Apache-2.0. heic2any: MIT.')),
       el('h3', {}, 'Privacidad'),
-      el('p', {}, 'Los looks, el autoajuste, los ajustes manuales y la mejora de resolución se procesan aquí. La foto solo sale del dispositivo cuando usas la barra de instrucciones con IA.'),
+      el('p', {}, 'Todo se procesa en este dispositivo. La app no sube tus fotos, no pide cuentas y no cobra por nada.'),
       el('h3', {}, 'Atajos'),
-      el('p', { html: '<span class="kbd">←</span> <span class="kbd">→</span> cambiar de look · <span class="kbd">F</span> pantalla completa · <span class="kbd">\\</span> antes y después · <span class="kbd">Ctrl+Z</span> deshacer · <span class="kbd">+</span> <span class="kbd">-</span> zoom · mantén pulsada la foto para ver el original' }),
+      el('p', { html: '<span class="kbd">←</span> <span class="kbd">→</span> cambiar de look · <span class="kbd">F</span> pantalla completa · <span class="kbd">\\\\</span> antes y después · <span class="kbd">Ctrl+Z</span> deshacer · mantén pulsada la foto para ver el original' }),
       el('div', { class: 'row' }, el('button', { class: 'btn primary', onclick: () => d.close() }, 'Cerrar'))));
   document.body.append(d);
   d.addEventListener('close', () => d.remove());
@@ -1779,6 +1700,7 @@ function openCredits() {
 }
 
 /* ---------- Android ---------- */
+function bytesToB64(u8) { let t = ''; for (let i = 0; i < u8.length; i += 32768) t += String.fromCharCode.apply(null, u8.subarray(i, i + 32768)); return btoa(t); }
 const Native = {
   on: !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()),
   /* El puente pasa texto: la imagen viaja en trozos para no agotar la memoria */
@@ -1820,7 +1742,7 @@ function setTheme(t) { document.documentElement.dataset.theme = t; try { localSt
   $('#brandBtn').addEventListener('click', () => { if (S.step !== 'subir') go('subir'); });
   $('#bUndo').innerHTML = I.undo; $('#bRedo').innerHTML = I.redo;
   $('#bUndo').addEventListener('click', () => undo(-1)); $('#bRedo').addEventListener('click', () => undo(1));
-  if (Native.on) Native.bindBack();
+  if (Native.on) { Native.bindBack(); const bar = window.Capacitor.Plugins.StatusBar; if (bar) { bar.setBackgroundColor({ color: '#08080A' }).catch(() => {}); bar.setStyle({ style: 'DARK' }).catch(() => {}); } }
   paintSteps();
   renderScreen($('#main'));
   IDB.get('customs').then((list) => {
@@ -1828,4 +1750,4 @@ function setTheme(t) { document.documentElement.dataset.theme = t; try { localSt
     list.forEach((p) => { S.customs.push(p); S.presets.set(p.id, p); });
   });
 })();
-window.__lumen = { Native, S, R, Core, ensureLut, renderFinal, paramsFor, go, loadFile, importPreset, aiPool, IDB };
+window.__lumen = { rebuildDetail, Native, S, R, Core, ensureLut, renderFinal, paramsFor, go, loadFile, importPreset, aiPool, IDB, chooseEngine };

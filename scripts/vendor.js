@@ -1,12 +1,17 @@
 #!/usr/bin/env node
-/* Copia las fuentes dentro de www/ para que el APK no dependa de Google Fonts.
-   Si falta alguna, avisa y deja el enlace a Google como respaldo. */
+/* Mete en www/vendor/ el motor local y las fuentes: el APK no depende de internet. */
 const fs = require('fs');
 const path = require('path');
 
 const raiz = path.resolve(__dirname, '..');
 const destino = path.join(raiz, 'www', 'vendor');
 fs.mkdirSync(destino, { recursive: true });
+const motor = process.env.VENDOR_DIR || path.join(raiz, '.vendor');
+if (!fs.existsSync(path.join(motor, 'models', 'realesr-general-x4v3.onnx'))) {
+  console.error('::error title=Falta el motor local::No se encontró ' + motor);
+  process.exit(1);
+}
+fs.cpSync(motor, destino, { recursive: true });
 const fuentes = [
   { paq: '@fontsource/manrope', familia: 'Manrope', pesos: [500, 600, 700, 800], estilos: ['normal'] },
   { paq: '@fontsource/instrument-serif', familia: 'Instrument Serif', pesos: [400], estilos: ['normal', 'italic'] },

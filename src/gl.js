@@ -6,7 +6,7 @@ void main(){ vUv=aPos; gl_Position=vec4(aPos.x*2.-1.,(1.-aPos.y*2.)*uFlip,0.,1.)
 const FS_MAIN = `#version 300 es
 precision highp float; precision highp sampler3D;
 in vec2 vUv; out vec4 fragColor;
-uniform sampler2D uSrc,uMask,uCurve,uBlurS,uBlurM; uniform sampler3D uLut;
+uniform sampler2D uSrc,uMask,uCurve,uBlurL,uBlurS,uBlurM; uniform sampler3D uLut;
 uniform vec4 uTile,uSub; uniform mat3 uSrcXf,uMaskXf; uniform vec2 uTap,uOutSize;
 uniform float uLowPass,uIdentity,uLutOn,uLutMix,uLutSize,uTetra,uDither,uSplit,uShowMask,uHasBlur,uAspect;
 uniform float uExp,uCon,uHi,uSh,uWh,uBl,uTemp,uTint,uVib,uSat,uHslOn,uCurveOn,uGradeOn,uSkinProt;
@@ -91,9 +91,9 @@ void main(){
  if(uMaskOn>.5){c=local(c,uMkP,mask.r);c=local(c,uMkS,mask.g);c=local(c,uMkB,mask.b);}
  if(uLowPass>.5){c=clamp(c,0.,1.);fragColor=vec4(c,min(c.r,min(c.g,c.b)));return;}
  if(uHasBlur>.5){
-  vec4 bM=texture(uBlurM,ou),bS=texture(uBlurS,ou);float y=luma(c);
-  if(uTex!=0.)c+=(y-luma(bS.rgb))*uTex*1.5;
-  if(uClar!=0.){float mm=1.-pow(abs(2.*y-1.),2.);c+=(y-luma(bM.rgb))*uClar*1.4*mm;}
+  vec4 bM=texture(uBlurM,ou),bS=texture(uBlurS,ou),bL=texture(uBlurL,ou);float y=luma(c);
+  if(uTex!=0.)c+=(luma(bL.rgb)-luma(bS.rgb))*uTex*2.2;
+  if(uClar!=0.){float mm=1.-pow(abs(2.*y-1.),2.);c+=(luma(bS.rgb)-luma(bM.rgb))*uClar*1.9*mm;}
   if(uHaze>0.){float t=max(1.-.92*uHaze*bM.a/max(max(uAtmos.r,max(uAtmos.g,uAtmos.b)),.2),.22);c=(c-uAtmos)/t+uAtmos;}
   else if(uHaze<0.)c=mix(c,uAtmos,-uHaze*.45);
   if(uHal>0.){float h=max(luma(bM.rgb)-.62,0.)*2.6;c+=vec3(1.,.36,.14)*h*uHal*.55;}
@@ -350,6 +350,8 @@ class Renderer {
   /* Pasadas de baja resolución para claridad, textura, neblina y halación */
   updateBlur(job, aspect) {
     const gl = this.gl, long = job.outW * job.outH < 200000 ? 256 : 1024, low = this.ensureLow(aspect, long), pr = this.main;
+    /* Evita leer y escribir la misma textura en esta pasada */
+    for (const unit of [gl.TEXTURE4, gl.TEXTURE5, gl.TEXTURE6]) { gl.activeTexture(unit); gl.bindTexture(gl.TEXTURE_2D, this.white); }
     gl.useProgram(pr.p);
     gl.bindFramebuffer(gl.FRAMEBUFFER, low.l.f);
     gl.viewport(0, 0, low.l.w, low.l.h);
@@ -419,9 +421,11 @@ class Renderer {
     if (needBlur) {
       gl.activeTexture(gl.TEXTURE4); gl.bindTexture(gl.TEXTURE_2D, this.low.s2.t); gl.uniform1i(this.loc(pr, 'uBlurS'), 4);
       gl.activeTexture(gl.TEXTURE5); gl.bindTexture(gl.TEXTURE_2D, this.low.m2.t); gl.uniform1i(this.loc(pr, 'uBlurM'), 5);
+      gl.activeTexture(gl.TEXTURE6); gl.bindTexture(gl.TEXTURE_2D, this.low.l.t); gl.uniform1i(this.loc(pr, 'uBlurL'), 6);
     } else {
       gl.activeTexture(gl.TEXTURE4); gl.bindTexture(gl.TEXTURE_2D, this.white); gl.uniform1i(this.loc(pr, 'uBlurS'), 4);
       gl.activeTexture(gl.TEXTURE5); gl.bindTexture(gl.TEXTURE_2D, this.white); gl.uniform1i(this.loc(pr, 'uBlurM'), 5);
+      gl.activeTexture(gl.TEXTURE6); gl.bindTexture(gl.TEXTURE_2D, this.white); gl.uniform1i(this.loc(pr, 'uBlurL'), 6);
     }
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     return true;

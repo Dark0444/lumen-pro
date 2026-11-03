@@ -1,17 +1,29 @@
-/* Prueba la app compilada en un navegador real, con el puente de Android simulado. */
+/* Prueba la app como la sirve Android: desde un origen local y con el puente simulado.
+   Usa el motor real incluido en www/vendor. */
 import { createRequire } from 'node:module';
+import fs from 'node:fs';
+import http from 'node:http';
 import path from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 
 const require = createRequire(import.meta.url);
 const { chromium } = require('playwright');
 const here = path.dirname(fileURLToPath(import.meta.url));
-const url = pathToFileURL(path.resolve(here, '../dist/LUMEN-PRO.html')).href;
+const www = path.resolve(here, '..', process.env.WWW || 'www');
+const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.wasm': 'application/wasm', '.css': 'text/css', '.woff2': 'font/woff2' };
+const server = http.createServer((req, res) => {
+  const f = path.join(www, decodeURIComponent(new URL(req.url, 'http://x').pathname.replace(/^\/$/, '/index.html')));
+  if (!f.startsWith(www) || !fs.existsSync(f)) { res.writeHead(404); res.end(); return; }
+  res.writeHead(200, { 'content-type': MIME[path.extname(f)] || 'application/octet-stream' });
+  fs.createReadStream(f).pipe(res);
+});
+await new Promise((r) => server.listen(0, '127.0.0.1', r));
+const url = `http://127.0.0.1:${server.address().port}/`;
 const fail = [];
 const check = (name, ok, detail = '') => { console.log(`${ok ? 'OK ' : 'MAL'} ${name}${detail ? ' · ' + detail : ''}`); if (!ok) fail.push(name); };
 
 const browser = await chromium.launch({ args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
-const ctx = await browser.newContext({ viewport: { width: 400, height: 800 }, isMobile: true, hasTouch: true });
+const ctx = await browser.newContext({ viewport: { width: 400, height: 800 }, isMobile: true, hasTouch: true, acceptDownloads: true });
 await ctx.addInitScript(() => {
   const log = (window.__native = { name: null, mime: null, size: 0, head: null, saves: 0, shares: 0, exit: 0, back: null, bar: [] });
   window.Capacitor = {
@@ -24,45 +36,63 @@ await ctx.addInitScript(() => {
         share: async () => { log.shares++; },
       },
       App: { addListener: (type, fn) => { if (type === 'backButton') log.back = fn; }, exitApp: () => { log.exit++; } },
-      StatusBar: { hide: async () => log.bar.push('hide'), show: async () => log.bar.push('show') },
+      StatusBar: { hide: async () => log.bar.push('hide'), show: async () => log.bar.push('show'), setBackgroundColor: async () => {}, setStyle: async () => {} },
     },
   };
 });
 const page = await ctx.newPage();
-const errors = [];
+const errors = [], external = [];
 page.on('pageerror', (e) => errors.push(e.message));
+page.on('console', (m) => { if (/GL_INVALID|Feedback loop/.test(m.text())) errors.push(m.text()); });
+page.on('request', (r) => { const u = r.url(); if (!u.startsWith(url) && !/^(data|blob):/.test(u)) external.push(u); });
 await page.goto(url);
 await page.click('.btn:has-text("ejemplo")');
 await page.waitForSelector('#edCanvas');
-await page.waitForFunction(() => document.querySelectorAll('.thumb').length === 41 && !document.querySelector('.thumb-pic.wait'), null, { timeout: 180000 });
-check('41 miniaturas con looks reales', true);
-await page.tap('.thumb:nth-child(3)');
+await page.waitForFunction(() => !document.querySelector('.thumb-pic.wait') && document.querySelectorAll('.thumb:not(.fix)').length === 85, null, { timeout: 240000 });
+check('85 miniaturas: sin look y 84 looks', true);
+check('Sugerencias visibles', (await page.$$('.thumb.fix')).length >= 1, await page.textContent('#diagRow'));
+await page.tap('.thumb.fix');
+await page.waitForFunction(() => window.__lumen.S.params.fix);
+check('Tocar una sugerencia la aplica', true);
+await page.tap('.thumb:not(.fix):nth-child(8)');
 await page.waitForTimeout(300);
 await page.tap('.dock-btn[data-mode="ajustes"]');
-await page.waitForTimeout(200);
-await page.tap('.step:text-is("Guardar")');
-await page.waitForSelector('#bDownload:not([disabled])', { timeout: 60000 });
+await page.waitForTimeout(300);
+const layout = await page.evaluate(() => { const s = document.getElementById('stage').getBoundingClientRect(); return { stage: Math.round(s.height), share: s.height / innerHeight, compact: document.querySelector('.panel').classList.contains('compact'), sliders: [...document.querySelectorAll('.panel .ctl')].filter((c) => !c.hidden).length, pills: document.querySelectorAll('.tool').length }; });
+check('Ajustes dejan la foto en grande', layout.share > 0.58 && layout.compact && layout.sliders === 1 && layout.pills >= 5, JSON.stringify(layout));
+await page.tap('.tool:nth-child(2)');
+const visible = await page.evaluate(() => [...document.querySelectorAll('.panel .ctl')].find((c) => !c.hidden).querySelector('input').id);
+check('Un ajuste a la vez', visible === 's-contrast', visible);
+
+await page.tap('.step:text-is("Calidad")');
+await page.waitForFunction(() => window.__lumen.S.finalC, null, { timeout: 120000 });
+await page.tap('.opt:has(strong:text-is("4K"))');
+await page.tap('#bApply');
+await page.waitForFunction(() => /Reconstruyendo detalle/.test(document.querySelector('.panelbox .note')?.textContent || ''), null, { timeout: 240000 });
+check('Muestra progreso y tiempo', true, await page.textContent('.panelbox .note'));
+await page.waitForFunction(() => !window.__lumen.S.enhBusy && window.__lumen.S.enh.mode === '4k', null, { timeout: 900000 });
+const q = await page.evaluate(() => { const { S } = window.__lumen; return { w: S.finalC.width, h: S.finalC.height, label: S.enh.label, cas: S.enh.cas }; });
+check('4K real con el motor incluido', q.w === 3840 && q.h === 2560 && /Real-ESRGAN/.test(q.label) && q.cas > 0, JSON.stringify(q));
+await page.tap('#bToDownload');
+await page.waitForSelector('#bDownload:not([disabled])', { timeout: 120000 });
 await page.tap('#bDownload');
-await page.waitForFunction(() => window.__native.saves === 1, null, { timeout: 15000 });
-const saved = await page.evaluate(() => ({ ...window.__native, back: null, real: 0 }));
-check('Guardar pasa por el plugin de Android', saved.head === 'ffd8' && saved.size > 5000 && saved.mime === 'image/jpeg' && /\.jpg$/.test(saved.name), `${saved.name}, ${saved.size} bytes`);
-const sent = await page.evaluate(() => document.getElementById('estSize').textContent);
-check('El peso mostrado es el del archivo guardado', /KB|MB/.test(sent), sent);
+await page.waitForFunction(() => window.__native.saves === 1, null, { timeout: 60000 });
+const saved = await page.evaluate(() => ({ ...window.__native, back: null }));
+check('Guardar pasa por el plugin de Android', saved.head === 'ffd8' && saved.size > 100000 && /_4k\.jpg$/.test(saved.name), `${saved.name}, ${saved.size} bytes`);
 check('Compartir disponible en Android', await page.evaluate(() => !document.getElementById('bShare').hidden));
 await page.tap('#bShare');
-await page.waitForFunction(() => window.__native.shares === 1, null, { timeout: 15000 });
-check('Compartir pasa por el plugin de Android', true);
+await page.waitForFunction(() => window.__native.shares === 1, null, { timeout: 60000 });
 await page.evaluate(() => window.__native.back());
 await page.waitForSelector('#edCanvas');
-check('Atrás: de Guardar a Editar', true);
 await page.tap('.dock-btn[data-mode="auto"]');
 await page.evaluate(() => window.__native.back());
 check('Atrás: cierra el panel', await page.evaluate(() => document.getElementById('studio').dataset.mode === 'looks'));
 await page.evaluate(() => window.__native.back());
 await page.waitForSelector('.drop');
-check('Atrás: de Editar a la portada', true);
 await page.evaluate(() => window.__native.back());
 check('Atrás: en la portada sale de la app', await page.evaluate(() => window.__native.exit === 1));
+check('Sin peticiones a internet', external.filter((u) => !/fonts\.g/.test(u)).length === 0, external.slice(0, 3).join(', '));
 check('Sin errores de JavaScript', errors.length === 0, errors.slice(0, 3).join(' | '));
 await browser.close();
+server.close();
 if (fail.length) { console.error('Fallaron: ' + fail.join(', ')); process.exit(1); }

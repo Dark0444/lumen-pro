@@ -229,10 +229,10 @@ test('análisis: temperatura, escena y recomendaciones verificables', () => {
   const scene = Core.classifyScene(s);
   assert.equal(scene.id, 'paisaje');
   const rank = Core.rankPresets(s, scene, luts);
-  assert.equal(rank.length, 40);
-  assert.equal(rank.filter((x) => x.recommended).length, 6);
-  assert.ok(rank.slice(0, 6).every((x) => x.recommended));
-  assert.ok(rank.slice(0, 6).filter((x) => ['cine', 'calidos', 'limpios', 'moody'].includes(x.cat)).length >= 3);
+  assert.equal(rank.length, luts.length);
+  assert.equal(rank.filter((x) => x.recommended).length, 8);
+  assert.ok(rank.slice(0, 8).every((x) => x.recommended));
+  assert.ok(rank.slice(0, 8).filter((x) => ['cine', 'calidos', 'limpios', 'moody'].includes(x.cat)).length >= 3);
   assert.ok(rank.every((x) => x.suggested >= 60 && x.suggested <= 100 && x.reason.length > 3));
   s.faces = 2;
   assert.equal(Core.classifyScene(s).id, 'retrato');
@@ -246,16 +246,18 @@ test('análisis: temperatura, escena y recomendaciones verificables', () => {
   assert.equal(warmStats.cast, 'cálida');
 });
 
-test('catálogo: 40 looks con LUT real y acabado', () => {
+test('catálogo: looks originales y nuevos con LUT real', () => {
   const luts = JSON.parse(fs.readFileSync(path.join(__dirname, '../build/luts.json')));
   const count = {};
   for (const l of luts) {
     count[l.cat] = (count[l.cat] || 0) + 1;
     assert.equal(l.srcLevel >= 8, true);
-    assert.ok(l.png.length > 1000);
+    assert.ok((l.png && l.png.length > 1000) || luts.some((o) => o.id === l.ref && o.png));
     assert.ok(l.license && l.author && l.fin && typeof l.fin.lut === 'number');
   }
-  assert.deepEqual(count, { limpios: 8, calidos: 8, moody: 8, cine: 6, pelicula: 6, bn: 4 });
+  assert.equal(luts.length, 84);
+  assert.equal(count.moviles, 9);
+  for (const id of ['clean', 'golden-hour', 'teal-orange', 'trix', 'iphone-17-pro-max', 'xiaomi-17-ultra-authentic', 'google-pixel']) assert.ok(luts.some((l) => l.id === id), id);
 });
 
 test('nombre de archivo automático', () => {
@@ -309,16 +311,54 @@ test('efectivo: suma manual, auto y acabado sin tocar lo manual', () => {
   clean.auto.amount = 1;
   assert.ok(!Core.colorIsIdentity(clean));
 });
-test('Gemini: lee la imagen de cada formato y explica errores', () => {
-  const a = Core.parseGeminiImage({ steps: [{ type: 'model_output', content: [{ type: 'text', text: 'ok' }, { type: 'image', data: 'AAA', mime_type: 'image/jpeg' }] }] });
-  assert.equal(a.image.data, 'AAA'); assert.equal(a.image.mime, 'image/jpeg');
-  assert.equal(Core.parseGeminiImage({ output_image: { data: 'BBB' } }).image.data, 'BBB');
-  assert.equal(Core.parseGeminiImage({ candidates: [{ content: { parts: [{ inlineData: { mimeType: 'image/png', data: 'CCC' } }] } }] }).image.data, 'CCC');
-  const none = Core.parseGeminiImage({ candidates: [{ finishReason: 'IMAGE_SAFETY', content: { parts: [{ text: 'No puedo' }] } }] });
-  assert.equal(none.image, null); assert.equal(none.text, 'No puedo'); assert.ok(none.block);
-  assert.match(Core.explainGeminiError(403, {}), /facturación/);
-  assert.match(Core.explainGeminiError(429, {}), /límite/);
-  assert.equal(Core.nearestAspect(4000, 3000), '4:3');
-  assert.equal(Core.nearestAspect(1080, 1920), '9:16');
-  assert.match(Core.buildEditPrompt('quita el árbol'), /quita el árbol/);
+test('diagnóstico: foto oscura, opaca, saturada y normal reciben sugerencias', () => {
+  const dg = (im) => { const s = Core.analyzePixels(im.a, im.W, im.H); return Core.diagnose(s, Core.classifyScene(s)); };
+  const dark = dg(gradient(2, 40));
+  assert.ok(dark.ids.has('dark') && dark.fixes.length >= 2 && dark.fixes.some((f) => f.fix.light && f.fix.light.exposure > 0), dark.summary);
+  const flat = dg(gradient(110, 150));
+  assert.ok(flat.ids.has('flat') && flat.fixes.some((f) => f.id === 'dar-vida'), flat.summary);
+  const sat = (() => { const W = 64, H = 48, a = new Uint8ClampedArray(W * H * 4); for (let i = 0; i < W * H; i++) a.set(i % 2 ? [250, 20, 30, 255] : [20, 40, 250, 255], i * 4); return dg({ a, W, H }); })();
+  assert.ok(sat.ids.has('oversat') && sat.fixes.some((f) => f.fix.color && f.fix.color.saturation < 0), sat.summary);
+  assert.ok(dg(gradient(10, 245)).fixes.length >= 1);
+});
+test('sugerencia: se suma y cuenta como ajuste', () => {
+  const p = Core.defaultParams();
+  assert.ok(Core.colorIsIdentity(p));
+  p.fix = { light: { exposure: 0.3 }, color: { saturation: -10 } };
+  assert.ok(!Core.colorIsIdentity(p));
+  const q = Core.effectiveParams(p);
+  assert.ok(Math.abs(q.light.exposure - 0.3) < 1e-9);
+  assert.equal(q.color.saturation, -10);
+  assert.equal(p.light.exposure, 0);
+});
+test('recomendaciones: una foto oscura recibe looks que la aclaran', () => {
+  const luts = JSON.parse(fs.readFileSync(path.join(__dirname, '../build/luts.json'))).map(({ png, ...r }) => r);
+  const s = Core.analyzePixels(gradient(2, 40).a, 96, 64), scene = Core.classifyScene(s);
+  const rank = Core.rankPresets(s, scene, luts);
+  assert.equal(rank.filter((x) => x.recommended).length, 8);
+  const byId = new Map(luts.map((l) => [l.id, l]));
+  assert.ok(rank.slice(0, 8).filter((r) => (byId.get(r.id).fits || []).includes('dark')).length >= 3);
+  assert.ok(rank.slice(0, 8).some((r) => /oscura/.test(r.reason)));
+});
+test('calidad: elige reconstruir, combinar o reducir según el tamaño', () => {
+  assert.equal(Core.qualityPlan(550, 980, '4k').kind, 'rebuild');
+  assert.equal(Core.qualityPlan(4000, 3000, '4k').kind, 'fusion');
+  assert.equal(Core.qualityPlan(4000, 3000, '1080p').kind, 'resize');
+  assert.equal(Core.qualityPlan(1000, 800, '1080p').kind, 'rebuild');
+  assert.equal(Core.qualityPlan(4000, 3000, 'original').kind, 'none');
+  const d = Core.qualityPlan(4000, 3000, 'detail');
+  assert.deepEqual([d.w, d.h, d.kind], [4000, 3000, 'fusion']);
+  assert.ok(d.input < 1);
+});
+test('nitidez CAS: conserva zonas planas, afila bordes sin salirse de rango', () => {
+  const W = 40, H = 20, a = new Uint8ClampedArray(W * H * 4);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { const v = x < 20 ? 90 : 170; a.set([v, v, v, 255], (y * W + x) * 4); }
+  const o = Core.casSharpen(a, W, H, 0.5);
+  assert.equal(o[(10 * W + 5) * 4], 90);
+  assert.equal(o[(10 * W + 35) * 4], 170);
+  assert.ok(o[(10 * W + 19) * 4] < 90, 'el borde oscuro debe bajar');
+  assert.ok(o[(10 * W + 20) * 4] > 170, 'el borde claro debe subir');
+  assert.ok(o[(10 * W + 19) * 4] > 60 && o[(10 * W + 20) * 4] < 205, 'sin halos fuertes');
+  const f = Core.fuseImages(new Uint8ClampedArray([200, 200, 200, 255]), new Uint8ClampedArray([100, 100, 100, 128]), 0.5);
+  assert.deepEqual([...f], [150, 150, 150, 128]);
 });

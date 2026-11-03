@@ -1,14 +1,9 @@
-/* LUMEN PRO · IA en el dispositivo: Real-ESRGAN con ONNX Runtime Web, MediaPipe y Lanczos en un worker */
-const AI_MODELS = {
-  fast: { id: 'realesr-general-x4v3', label: 'IA rápida', mb: 5, url: 'https://huggingface.co/relax123666/clearpic-models/resolve/main/realesr-general-x4v3.onnx', note: 'Modelo realesr-general-x4v3' },
-  max: { id: 'RealESRGAN_x4plus', label: 'IA máxima calidad', mb: 67, url: 'https://huggingface.co/relax123666/clearpic-models/resolve/main/RealESRGAN_x4plus.onnx', note: 'Modelo RealESRGAN_x4plus' },
+/* LUMEN PRO · motor local: todo corre en el dispositivo, sin cuentas, pagos ni descargas */
+const VENDOR = new URL('vendor/', location.href).href;
+const MODELS = {
+  fast: { file: 'realesr-general-x4v3.onnx', label: 'Real-ESRGAN rápido' },
+  max: { file: 'RealESRGAN_x4plus.onnx', label: 'Real-ESRGAN máxima calidad' },
 };
-const ORT_VERSION = '1.23.2';
-const ORT_BASES = [`https://cdn.jsdelivr.net/npm/onnxruntime-web@${ORT_VERSION}/dist/`, `https://unpkg.com/onnxruntime-web@${ORT_VERSION}/dist/`];
-const MP_VERSION = '0.10.14';
-const MP_BASE = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VERSION}`;
-const MP_FACE = 'https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite';
-const MP_SEG = 'https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_multiclass_256x256/float32/latest/selfie_multiclass_256x256.tflite';
 
 const IDB = {
   open() {
@@ -49,29 +44,39 @@ function workerBody() {
       if (m.type === 'resize') {
         const out = Core.lanczosResize(m.rgba, m.w, m.h, m.dw, m.dh, 4);
         reply(m.id, { rgba: out }, [out.buffer]);
+      } else if (m.type === 'sharpen') {
+        const out = Core.casSharpen(m.rgba, m.w, m.h, m.amount);
+        reply(m.id, { rgba: out }, [out.buffer]);
+      } else if (m.type === 'fuse') {
+        const out = Core.fuseImages(m.ai, m.base, m.mix);
+        reply(m.id, { rgba: out }, [out.buffer]);
       } else if (m.type === 'ai-init') {
-        let lastError = null;
         if (!ort) {
-          for (const base of m.bases) {
-            try { importScripts(base + 'ort.webgpu.min.js'); self.ort.env.wasm.wasmPaths = base; ort = self.ort; break; } catch (e) { lastError = e; }
-          }
-          if (!ort) throw new Error('No se pudo descargar ONNX Runtime. Comprueba tu conexión a internet. ' + (lastError ? lastError.message : ''));
+          importScripts(m.base + 'ort/ort.webgpu.min.js');
+          ort = self.ort;
+          ort.env.wasm.wasmPaths = m.base + 'ort/';
           ort.env.wasm.numThreads = self.crossOriginIsolated ? Math.min(4, self.navigator.hardwareConcurrency || 1) : 1;
           ort.env.wasm.proxy = false;
         }
-        const bytes = new Uint8Array(m.model);
-        const providers = self.navigator.gpu ? ['webgpu', 'wasm'] : ['wasm'];
+        if (session) { try { await session.release(); } catch { /* ya liberada */ } session = null; }
+        const res = await fetch(m.base + 'models/' + m.file);
+        if (!res.ok) throw new Error('No se encontró el modelo ' + m.file);
+        const bytes = new Uint8Array(await res.arrayBuffer());
+        let adapter = null;
+        if (!m.cpuOnly && self.navigator.gpu) { try { adapter = await self.navigator.gpu.requestAdapter(); } catch { adapter = null; } }
+        if (m.gpuOnly && !adapter) throw new Error('Este dispositivo no tiene GPU disponible para el navegador.');
+        const providers = adapter ? (m.gpuOnly ? ['webgpu'] : ['webgpu', 'wasm']) : ['wasm'];
+        let lastError = null;
         for (const p of providers) {
           try { session = await ort.InferenceSession.create(bytes, { executionProviders: [p], graphOptimizationLevel: 'all' }); ep = p; break; } catch (e) { lastError = e; session = null; }
         }
-        if (!session) throw new Error('El modelo no pudo iniciarse en este dispositivo. ' + (lastError ? lastError.message : ''));
-        reply(m.id, { ep, input: session.inputNames[0], output: session.outputNames[0] });
+        if (!session) throw new Error('El motor no pudo iniciarse en este dispositivo. ' + (lastError ? lastError.message : ''));
+        reply(m.id, { ep });
       } else if (m.type === 'ai-tile') {
         const { w, h, rgb, region, ratio, ox, oy } = m;
         const t = new Float32Array(3 * w * h);
         for (let i = 0, n = w * h; i < n; i++) { t[i] = rgb[i * 3] / 255; t[n + i] = rgb[i * 3 + 1] / 255; t[2 * n + i] = rgb[i * 3 + 2] / 255; }
-        const feeds = { [session.inputNames[0]]: new ort.Tensor('float32', t, [1, 3, h, w]) };
-        const res = await session.run(feeds);
+        const res = await session.run({ [session.inputNames[0]]: new ort.Tensor('float32', t, [1, 3, h, w]) });
         const out = res[session.outputNames[0]];
         const oh = out.dims[2], ow = out.dims[3], d = await (out.getData ? out.getData() : out.data);
         const up = new Uint8ClampedArray(ow * oh * 3);
@@ -126,83 +131,94 @@ const classicPool = new Pool();
 const aiPool = new Pool();
 const lanczosWorker = async (rgba, w, h, dw, dh) => {
   const copy = new Uint8ClampedArray(rgba);
-  const r = await classicPool.call({ type: 'resize', rgba: copy, w, h, dw, dh }, [copy.buffer]);
-  return r.rgba;
+  return (await classicPool.call({ type: 'resize', rgba: copy, w, h, dw, dh }, [copy.buffer])).rgba;
+};
+const sharpenWorker = async (rgba, w, h, amount) => {
+  const copy = new Uint8ClampedArray(rgba);
+  return (await classicPool.call({ type: 'sharpen', rgba: copy, w, h, amount }, [copy.buffer])).rgba;
+};
+const fuseWorker = async (ai, base, mix) => {
+  const a = new Uint8ClampedArray(ai), b = new Uint8ClampedArray(base);
+  return (await classicPool.call({ type: 'fuse', ai: a, base: b, mix }, [a.buffer, b.buffer])).rgba;
 };
 
-async function downloadModel(key, onProgress) {
-  const m = AI_MODELS[key];
-  const cached = await IDB.get('model:' + m.id);
-  if (cached) return { buffer: cached, fromCache: true };
-  let res;
-  try { res = await fetch(m.url, { mode: 'cors' }); } catch { throw new Error(`No se pudo descargar ${m.id}. Revisa tu conexión o carga el archivo .onnx desde tu equipo.`); }
-  if (!res.ok) throw new Error(`Hugging Face respondió ${res.status} al pedir ${m.id}. Carga el archivo .onnx desde tu equipo.`);
-  const total = Number(res.headers.get('content-length')) || m.mb * 1048576;
-  const reader = res.body.getReader(), chunks = [];
-  let got = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    chunks.push(value); got += value.length;
-    onProgress(Math.min(1, got / total), got);
+/* Elige modelo y tamaño según lo que aguante el dispositivo */
+const BUDGET_SECONDS = 240, TILE_OVERLAP = 32;
+function tileRgb(rgba, w, t) {
+  const rgb = new Uint8Array(t.w * t.h * 3);
+  for (let y = 0; y < t.h; y++) for (let x = 0; x < t.w; x++) {
+    const a = ((y + t.y) * w + x + t.x) * 4, b = (y * t.w + x) * 3;
+    rgb[b] = rgba[a]; rgb[b + 1] = rgba[a + 1]; rgb[b + 2] = rgba[a + 2];
   }
-  const buffer = new Uint8Array(got);
-  let p = 0;
-  for (const c of chunks) { buffer.set(c, p); p += c.length; }
-  await IDB.set('model:' + m.id, buffer.buffer);
-  return { buffer: buffer.buffer, fromCache: false };
+  return rgb;
 }
-
-/* Corre el modelo por mosaicos con solapamiento de 32 px. Devuelve RGBA en las dimensiones pedidas. */
+async function startModel(key, cpuOnly, gpuOnly) {
+  return (await aiPool.call({ type: 'ai-init', base: VENDOR, file: MODELS[key].file, cpuOnly, gpuOnly })).ep;
+}
+async function benchmark(rgba, w, h, tile) {
+  const t = { x: Math.max(0, (w - tile) >> 1), y: Math.max(0, (h - tile) >> 1), w: Math.min(tile, w), h: Math.min(tile, h) };
+  const rgb = tileRgb(rgba, w, t), t0 = performance.now();
+  await aiPool.call({ type: 'ai-tile', w: t.w, h: t.h, rgb, region: { dx: 0, dy: 0, dw: 4, dh: 4 }, ratio: 1, ox: t.x, oy: t.y }, [rgb.buffer]);
+  return ((performance.now() - t0) / 1000) / (t.w * t.h);
+}
+async function chooseEngine(rgba, w, h, onStatus) {
+  const totalPx = (tile) => { const n = Core.planTiles(w, h, tile, TILE_OVERLAP); return n.reduce((a, t) => a + t.w * t.h, 0); };
+  if (self.navigator.gpu) {
+    try {
+      onStatus('Probando la máxima calidad en tu teléfono…');
+      const ep = await startModel('max', false, true);
+      const perPx = await benchmark(rgba, w, h, 128);
+      if (perPx * totalPx(256) <= BUDGET_SECONDS) return { key: 'max', ep, tile: 256, perPx, scale: 1 };
+    } catch { aiPool.stop(); }
+  }
+  onStatus('Preparando el motor rápido…');
+  let ep;
+  try { ep = await startModel('fast', false); } catch { aiPool.stop(); ep = await startModel('fast', true); }
+  const tile = ep === 'webgpu' ? 256 : 128;
+  const perPx = await benchmark(rgba, w, h, Math.min(tile, 128));
+  const est = perPx * totalPx(tile);
+  return { key: 'fast', ep, tile, perPx, scale: est > BUDGET_SECONDS ? Math.max(0.35, Math.sqrt(BUDGET_SECONDS / est)) : 1 };
+}
+/* Reconstruye por mosaicos con solapamiento de 32 px. Devuelve RGBA en las dimensiones pedidas. */
 async function aiUpscale({ rgba, w, h, tw, th, tile, onProgress, signal }) {
-  const OVERLAP = 32, s = tw / w;
-  const s2 = Math.min(s, 4);
+  const s = tw / w, s2 = Math.min(s, 4);
   const aw = Math.round(w * s2), ah = Math.round(h * s2);
   let acc, wgt;
   try { acc = new Float32Array(aw * ah * 3); wgt = new Float32Array(aw * ah); } catch {
-    const err = new Error(`No hay memoria para trabajar a ${aw}×${ah} px. Elige una salida menor, como 1080p.`);
-    err.memory = true;
-    throw err;
+    throw Object.assign(new Error(`No hay memoria para trabajar a ${aw}×${ah} px. Elige una salida menor, como 1080p.`), { memory: true });
   }
-  const tiles = Core.planTiles(w, h, tile, OVERLAP), t0 = performance.now();
+  const tiles = Core.planTiles(w, h, tile, TILE_OVERLAP), t0 = performance.now();
   for (let i = 0; i < tiles.length; i++) {
     if (signal.cancelled) throw Object.assign(new Error('Proceso cancelado.'), { cancelled: true });
-    const t = tiles[i], reg = Core.destRegion(t, w, h, s2, OVERLAP);
-    const rgb = new Uint8Array(t.w * t.h * 3);
-    for (let y = 0; y < t.h; y++) for (let x = 0; x < t.w; x++) {
-      const a = ((y + t.y) * w + x + t.x) * 4, b = (y * t.w + x) * 3;
-      rgb[b] = rgba[a]; rgb[b + 1] = rgba[a + 1]; rgb[b + 2] = rgba[a + 2];
-    }
+    const t = tiles[i], reg = Core.destRegion(t, w, h, s2, TILE_OVERLAP);
+    const rgb = tileRgb(rgba, w, t);
     const r = await aiPool.call({ type: 'ai-tile', w: t.w, h: t.h, rgb, region: reg, ratio: 1 / s2, ox: t.x, oy: t.y }, [rgb.buffer]);
     Core.blendTile(acc, wgt, aw, ah, reg, r.rgb, 3);
     const elapsed = (performance.now() - t0) / 1000;
-    onProgress((i + 1) / tiles.length, elapsed / (i + 1) * (tiles.length - i - 1), i + 1, tiles.length);
+    onProgress((i + 1) / tiles.length, elapsed / (i + 1) * (tiles.length - i - 1));
   }
-  const hasAlpha = (() => { for (let i = 3; i < rgba.length; i += 4) if (rgba[i] !== 255) return true; return false; })();
-  const alpha = hasAlpha ? Core.lanczosResize(rgba, w, h, aw, ah, 4) : null;
-  const out = Core.resolveAccum(acc, wgt, aw, ah, alpha);
+  const out = Core.resolveAccum(acc, wgt, aw, ah, null);
   if (aw === tw && ah === th) return out;
   return lanczosWorker(out, aw, ah, tw, th);
 }
 
-/* MediaPipe bajo demanda. Nada de esto sube la foto: solo descarga motor y modelo. */
+/* MediaPipe local para rostros y personas */
 const Vision = {
   async fileset() {
     if (!this.mod) {
-      this.mod = await import(`${MP_BASE}/vision_bundle.mjs`);
-      this.files = await this.mod.FilesetResolver.forVisionTasks(`${MP_BASE}/wasm`);
+      this.mod = await import(VENDOR + 'mediapipe/vision_bundle.mjs');
+      this.files = await this.mod.FilesetResolver.forVisionTasks(VENDOR + 'mediapipe/wasm');
     }
     return this.files;
   },
   async countFaces(canvas) {
     const files = await this.fileset();
-    if (!this.face) this.face = await this.mod.FaceDetector.createFromOptions(files, { baseOptions: { modelAssetPath: MP_FACE, delegate: 'CPU' }, runningMode: 'IMAGE', minDetectionConfidence: 0.55 });
-    const r = this.face.detect(canvas);
-    return r.detections.length;
+    if (!this.face) this.face = await this.mod.FaceDetector.createFromOptions(files, { baseOptions: { modelAssetPath: VENDOR + 'models/blaze_face_short_range.tflite', delegate: 'CPU' }, runningMode: 'IMAGE', minDetectionConfidence: 0.55 });
+    return this.face.detect(canvas).detections.length;
   },
   async segment(canvas) {
     const files = await this.fileset();
-    if (!this.seg) this.seg = await this.mod.ImageSegmenter.createFromOptions(files, { baseOptions: { modelAssetPath: MP_SEG, delegate: 'CPU' }, runningMode: 'IMAGE', outputCategoryMask: false, outputConfidenceMasks: true });
+    if (!this.seg) this.seg = await this.mod.ImageSegmenter.createFromOptions(files, { baseOptions: { modelAssetPath: VENDOR + 'models/selfie_multiclass_256x256.tflite', delegate: 'CPU' }, runningMode: 'IMAGE', outputCategoryMask: false, outputConfidenceMasks: true });
     const r = this.seg.segment(canvas);
     const get = (i) => r.confidenceMasks[i].getAsFloat32Array();
     const w = r.confidenceMasks[0].width, h = r.confidenceMasks[0].height;
@@ -213,5 +229,5 @@ const Vision = {
 };
 
 function loadScript(src) {
-  return new Promise((res, rej) => { const s = document.createElement('script'); s.src = src; s.onload = res; s.onerror = () => rej(new Error('No se pudo descargar ' + src)); document.head.append(s); });
+  return new Promise((res, rej) => { const s = document.createElement('script'); s.src = src; s.onload = res; s.onerror = () => rej(new Error('No se pudo cargar ' + src)); document.head.append(s); });
 }

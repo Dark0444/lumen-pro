@@ -30,6 +30,21 @@ jobs:
       - name: Compilar la app web
         run: python3 build/build.py
 
+      - name: Bajar el motor local
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p .vendor/models
+          gh release download vendor-v1 --pattern vendor.tar --pattern RealESRGAN_x4plus.onnx --dir .dl
+          tar xf .dl/vendor.tar -C .vendor
+          mv .dl/RealESRGAN_x4plus.onnx .vendor/models/
+          rm -rf .dl
+
+      - name: Copiar el motor y las fuentes
+        run: |
+          npm install --no-save --no-package-lock @fontsource/manrope@5 @fontsource/instrument-serif@5 > fonts.txt 2>&1
+          node scripts/vendor.js
+
       - name: Probar la app en un navegador
         run: |
           set +e
@@ -39,7 +54,7 @@ jobs:
             echo "::warning title=Sin navegador::No se pudo preparar la prueba; se compila sin ella."
             exit 0
           fi
-          node test/smoke.mjs 2>&1 | tee smoke.txt
+          WWW=www node test/smoke.mjs 2>&1 | tee smoke.txt
           code=${PIPESTATUS[0]}
           if [ $code -ne 0 ]; then
             echo "::error title=La prueba en el navegador falló::$(grep MAL smoke.txt | head -10 | sed ':a;N;$!ba;s/\n/%0A/g')"
@@ -56,9 +71,6 @@ jobs:
             echo "::error title=npm install falló::$msg"
             exit 1
           fi
-
-      - name: Copiar fuentes locales
-        run: node scripts/vendor.js
 
       - name: Generar el proyecto Android
         run: |
@@ -110,7 +122,7 @@ jobs:
           BT=$(ls -d $ANDROID_HOME/build-tools/* | sort -V | tail -1)
           $BT/apksigner verify --print-certs LumenPro.apk | head -3
           $BT/aapt2 dump badging LumenPro.apk | grep -E "^package:|sdkVersion|targetSdkVersion|application-label:"
-          unzip -l LumenPro.apk | grep -E "assets/public/(index.html|vendor/fuentes.css)"
+          unzip -l LumenPro.apk | grep -E "assets/public/(index.html|vendor/fuentes.css|vendor/models/|vendor/ort/)"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -122,7 +134,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release delete apk-latest --cleanup-tag -y || true
-          gh release create apk-latest LumenPro.apk dist/LUMEN-PRO.html \
+          gh release create apk-latest LumenPro.apk \
             --title "LUMEN PRO (última versión)" \
             --notes "APK compilado desde el commit ${GITHUB_SHA::7}. Tamaño: ${TAMANO}. Se instala encima de la versión anterior porque siempre va firmado con la misma llave. Requiere Android 10 o superior." \
             --latest

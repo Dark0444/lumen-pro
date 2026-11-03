@@ -7,7 +7,7 @@ const Core = (() => {
   /* ---------- Parámetros ---------- */
   const emptyCurve = () => [[0, 0], [1, 1]];
   const defaultParams = () => ({
-    presetId: null, intensity: 100, recipe: null,
+    presetId: null, intensity: 100, recipe: null, fixId: null, fix: null,
     auto: { amount: 0, exposure: 0, contrast: 0, highlights: 0, shadows: 0, whites: 0, blacks: 0, vibrance: 0, clarity: 0, dehaze: 0, wb: [1, 1, 1] },
     light: { exposure: 0, contrast: 0, highlights: 0, shadows: 0, whites: 0, blacks: 0 },
     color: { temp: 0, tint: 0, vibrance: 0, saturation: 0, hsl: { h: Array(8).fill(0), s: Array(8).fill(0), l: Array(8).fill(0) } },
@@ -32,7 +32,7 @@ const Core = (() => {
     const d = defaultParams();
     const lutOff = !p.presetId || p.intensity === 0;
     const autoOff = !p.auto || !p.auto.amount;
-    return lutOff && autoOff && sectionIsDefault(p.light, d.light) && sectionIsDefault(p.color, d.color) && sectionIsDefault(p.curves, d.curves)
+    return lutOff && autoOff && !p.fix && sectionIsDefault(p.light, d.light) && sectionIsDefault(p.color, d.color) && sectionIsDefault(p.curves, d.curves)
       && sectionIsDefault(p.grade, d.grade) && sectionIsDefault(p.detail, d.detail) && sectionIsDefault(p.fx, d.fx)
       && sectionIsDefault(p.masks, d.masks) && !p.xmpOverlay;
   }
@@ -46,7 +46,8 @@ const Core = (() => {
     const k = p.presetId ? (intensity === undefined ? p.intensity : intensity) / 100 : 0;
     const r = p.recipe && k ? p.recipe : null;
     const lutScale = p.presetId ? (p.recipe && p.recipe.lut !== undefined ? p.recipe.lut : 1) : 0;
-    if (!a && !r) return { ...p, _wb: [1, 1, 1], _fade: 0, _lutMix: k * lutScale };
+    const fx = p.fix || null;
+    if (!a && !r && !fx) return { ...p, _wb: [1, 1, 1], _fade: 0, _lutMix: k * lutScale };
     const q = { ...p, light: { ...p.light }, color: { ...p.color }, detail: { ...p.detail }, fx: { ...p.fx }, grade: { shadows: { ...p.grade.shadows }, mids: { ...p.grade.mids }, highs: { ...p.grade.highs } } };
     if (a) {
       for (const key of ['exposure', 'contrast', 'highlights', 'shadows', 'whites', 'blacks']) q.light[key] += (p.auto[key] || 0) * a;
@@ -60,6 +61,10 @@ const Core = (() => {
       for (const key of Object.keys(r.detail || {})) q.detail[key] += r.detail[key] * k;
       for (const key of Object.keys(r.fx || {})) q.fx[key] += r.fx[key] * k;
       for (const key of ['shadows', 'mids', 'highs']) if (r.grade && r.grade[key] && !p.grade[key].s) q.grade[key] = { h: r.grade[key].h, s: r.grade[key].s * k };
+    }
+    if (fx) {
+      for (const sec of ['light', 'color', 'detail', 'fx']) for (const key of Object.keys(fx[sec] || {})) q[sec][key] = (q[sec][key] || 0) + fx[sec][key];
+      if (fx.masksSkin) q.masks = { ...p.masks, skinProtect: Math.max(p.masks.skinProtect, fx.masksSkin) };
     }
     const wb = p.auto && p.auto.wb ? p.auto.wb.map((g) => 1 + (g - 1) * a) : [1, 1, 1];
     return { ...q, _wb: wb, _fade: r && r.fade ? r.fade * k : 0, _lutMix: k * lutScale };
@@ -113,43 +118,105 @@ const Core = (() => {
     return { amount: 100, exposure: r(ev), contrast: r(contrast), highlights: r(highlights), shadows: r(shadows), whites: r(whites), blacks: r(blacks), vibrance, clarity, dehaze, wb: wb.map((v) => Math.round(v * 1000) / 1000), label, notes };
   }
 
-  /* ---------- Edición con instrucciones (Gemini) ---------- */
-  const GEMINI_RATIOS = ['1:1', '3:2', '2:3', '3:4', '4:3', '4:5', '5:4', '9:16', '16:9', '21:9'];
-  function nearestAspect(w, h) {
-    const t = Math.log(w / h);
-    let best = '1:1', d = Infinity;
-    for (const r of GEMINI_RATIOS) { const [a, b] = r.split(':').map(Number); const e = Math.abs(Math.log(a / b) - t); if (e < d) { d = e; best = r; } }
-    return best;
+  /* ---------- Diagnóstico y sugerencias ---------- */
+  function diagnose(s, scene) {
+    const issues = [];
+    const add = (id, title, fixes) => issues.push({ id, title, fixes });
+    const portrait = (scene && scene.id === 'retrato') || s.faces > 0;
+    const range = s.p99 - s.p1;
+    if (s.mean < 0.14 || s.p50 < 0.09) {
+      add('dark', 'Foto muy oscura', [
+        { id: 'rescate-fuerte', name: 'Rescate de luz', fix: { light: { exposure: 0.55, shadows: 45, blacks: 10, whites: 12 }, color: { vibrance: 8 }, detail: { denoise: 22 } } },
+        { id: 'noche-limpia', name: 'Noche limpia', fix: { light: { exposure: 0.2, shadows: 26, contrast: 8 }, color: { vibrance: 6 }, detail: { denoise: 30 } } },
+      ]);
+    } else if (s.mean < 0.3 || s.p50 < 0.22) {
+      add('dark', 'Foto oscura', [
+        { id: 'rescatar-luz', name: 'Rescatar luz', fix: { light: { exposure: 0.3, shadows: 32, whites: 10 }, color: { vibrance: 6 }, detail: { denoise: 8 } } },
+        { id: 'sombras-abiertas', name: 'Abrir sombras', fix: { light: { shadows: 42, highlights: -10, contrast: 4 } } },
+      ]);
+    }
+    if (s.mean > 0.62 || s.clipHi > 0.06) {
+      add('bright', s.clipHi > 0.06 ? 'Altas luces quemadas' : 'Foto muy clara', [
+        { id: 'recuperar-luces', name: 'Recuperar luces', fix: { light: { exposure: -0.22, highlights: -42, whites: -16, contrast: 8 } } },
+      ]);
+    }
+    if (s.std < 0.15 || range < 0.62) {
+      add('flat', 'Foto opaca', [
+        { id: 'dar-vida', name: 'Dar vida', fix: { light: { contrast: 18, blacks: -12, whites: 10 }, color: { vibrance: 18 }, detail: { clarity: 14 } } },
+        { id: 'quitar-opacidad', name: 'Quitar opacidad', fix: { light: { contrast: 8, blacks: -8 }, detail: { dehaze: 32, clarity: 8 } } },
+      ]);
+    }
+    if (s.chroma > 0.36 || s.satClip > 0.12) {
+      add('oversat', 'Mucha saturación', [
+        { id: 'color-natural', name: 'Color natural', fix: { color: { saturation: -20, vibrance: -6 }, light: { contrast: 4 } } },
+        { id: 'color-elegante', name: 'Color elegante', fix: { color: { saturation: -32 }, light: { contrast: 10, highlights: -8 } } },
+      ]);
+    } else if (s.chroma < 0.13) {
+      add('dull', 'Color apagado', [
+        { id: 'color-vivo', name: 'Color vivo', fix: { color: { vibrance: 30, saturation: 6 }, light: { contrast: 6 } } },
+      ]);
+    }
+    if (s.p10 < 0.08 && s.p90 > 0.8 && s.std > 0.27) {
+      add('backlit', 'Contraluz', [
+        { id: 'equilibrar-contraluz', name: 'Equilibrar contraluz', fix: { light: { shadows: 52, highlights: -38, contrast: -4 }, detail: { clarity: 6 } } },
+      ]);
+    }
+    if (s.cast === 'cálida' && s.cct < 4300) add('warm', 'Luz muy cálida', [{ id: 'enfriar', name: 'Luz neutra', fix: { color: { temp: -14 } } }]);
+    if (s.cast === 'fría' && s.cct > 7500) add('cool', 'Luz muy fría', [{ id: 'calentar', name: 'Luz cálida', fix: { color: { temp: 14 } } }]);
+    if (portrait) issues.push({ id: 'portrait', title: 'Retrato', fixes: [{ id: 'retrato-pro', name: 'Retrato pro', fix: { light: { highlights: -10, shadows: 12 }, color: { vibrance: 6, temp: 3 }, detail: { texture: -10, clarity: 4 }, masksSkin: 40 } }] });
+    if (!issues.length) issues.push({ id: 'ok', title: 'Buena foto', fixes: [
+      { id: 'pulido-pro', name: 'Pulido pro', fix: { light: { contrast: 8, shadows: 8, highlights: -8 }, color: { vibrance: 12 }, detail: { clarity: 8 } } },
+      { id: 'mas-impacto', name: 'Más impacto', fix: { light: { contrast: 14, blacks: -8 }, color: { vibrance: 20 }, detail: { clarity: 12 }, fx: { vignette: -10 } } },
+    ] });
+    /* Primero la mejor sugerencia de cada problema; luego las alternativas */
+    const fixes = [];
+    for (let round = 0; round < 2; round++) for (const i of issues) if (i.fixes[round] && fixes.length < 5) fixes.push({ ...i.fixes[round], issue: i.title });
+    const real = issues.filter((i) => !['ok', 'portrait'].includes(i.id));
+    const summary = real.length ? real.slice(0, 2).map((i) => i.title).join(' y ') : issues[0].title;
+    return { issues, fixes, summary, ids: new Set(issues.map((i) => i.id)) };
   }
-  function buildEditPrompt(instruction) {
-    return `You are a professional photo retoucher. Edit the attached photograph and return only the edited image.\n\nInstruction from the user, in their words: "${instruction.trim()}"\n\nChange only what the instruction asks. Keep every person's face, identity, body and expression unchanged unless asked. Keep the rest of the scene, the framing and the perspective as they are. New or changed elements must match the photo's lighting, shadows, color, grain and focus so the result looks like an untouched real photograph.`;
+
+  /* Contraste adaptativo (CAS): afila bordes sin halos y casi sin subir el ruido. */
+  function casSharpen(src, w, h, amount) {
+    const out = new Uint8ClampedArray(src.length);
+    const peak = -1 / (8 - 3 * clamp(amount));
+    const at = (x, y, c) => src[(y * w + x) * 4 + c];
+    for (let y = 0; y < h; y++) {
+      const up = y > 0 ? y - 1 : y, dn = y < h - 1 ? y + 1 : y;
+      for (let x = 0; x < w; x++) {
+        const lf = x > 0 ? x - 1 : x, rt = x < w - 1 ? x + 1 : x, k = (y * w + x) * 4;
+        const g = at(x, y, 1), gn = at(x, up, 1), gs = at(x, dn, 1), gw = at(lf, y, 1), ge = at(rt, y, 1);
+        const mn = Math.min(g, gn, gs, gw, ge), mx = Math.max(g, gn, gs, gw, ge);
+        const room = Math.min(mn, 255 - mx);
+        const wgt = mx > 0 ? Math.sqrt(Math.max(0, room / mx)) * peak : 0;
+        const div = 1 / (1 + 4 * wgt);
+        out[k] = (src[k] + wgt * (at(x, up, 0) + at(x, dn, 0) + at(lf, y, 0) + at(rt, y, 0))) * div;
+        out[k + 1] = (g + wgt * (gn + gs + gw + ge)) * div;
+        out[k + 2] = (src[k + 2] + wgt * (at(x, up, 2) + at(x, dn, 2) + at(lf, y, 2) + at(rt, y, 2))) * div;
+        out[k + 3] = src[k + 3];
+      }
+    }
+    return out;
   }
-  /* Busca la imagen en la respuesta. Admite Interactions y generateContent, y devuelve el motivo si no hay imagen. */
-  function parseGeminiImage(json) {
-    let image = null, text = '';
-    const walk = (node) => {
-      if (!node || typeof node !== 'object') return;
-      if (Array.isArray(node)) { node.forEach(walk); return; }
-      const inline = node.inlineData || node.inline_data;
-      if (inline && typeof inline.data === 'string') image = { data: inline.data, mime: inline.mimeType || inline.mime_type || 'image/png' };
-      else if (node.type === 'image' && typeof node.data === 'string') image = { data: node.data, mime: node.mime_type || node.mimeType || 'image/png' };
-      else if (node.output_image && typeof node.output_image.data === 'string') image = { data: node.output_image.data, mime: node.output_image.mime_type || 'image/png' };
-      if (typeof node.text === 'string' && !node.thought) text = node.text;
-      for (const key of Object.keys(node)) if (key !== 'data') walk(node[key]);
-    };
-    walk(json);
-    const block = (json && json.promptFeedback && json.promptFeedback.blockReason) || (json && json.candidates && json.candidates[0] && /SAFETY|PROHIBITED|IMAGE_/.test(json.candidates[0].finishReason || '') && json.candidates[0].finishReason) || null;
-    return { image, text, block };
+  /* Une la reconstrucción con el detalle real para que no se vea pintada. */
+  function fuseImages(ai, base, mix) {
+    const out = new Uint8ClampedArray(ai.length);
+    for (let i = 0; i < ai.length; i += 4) {
+      out[i] = ai[i] * mix + base[i] * (1 - mix);
+      out[i + 1] = ai[i + 1] * mix + base[i + 1] * (1 - mix);
+      out[i + 2] = ai[i + 2] * mix + base[i + 2] * (1 - mix);
+      out[i + 3] = base[i + 3];
+    }
+    return out;
   }
-  function explainGeminiError(status, body) {
-    const m = body && body.error && body.error.message ? body.error.message : '';
-    if (status === 400 && /api key/i.test(m)) return 'La clave de Gemini no es válida. Revísala y vuelve a pegarla.';
-    if (status === 400) return `Google rechazó la petición: ${m || 'datos no válidos'}.`;
-    if (status === 401 || status === 403) return 'Google rechazó la clave. Revisa que sea correcta y que tu proyecto tenga facturación activa, porque estos modelos no tienen plan gratuito.';
-    if (status === 404) return 'Google ya no encuentra ese modelo. Actualiza el nombre del modelo en la configuración de IA.';
-    if (status === 429) return 'Llegaste al límite de peticiones o de gasto de tu cuenta de Google. Espera un momento o revisa tu cuota.';
-    if (status >= 500) return 'El servicio de Google falló de forma temporal. Inténtalo otra vez en unos segundos.';
-    return `Google respondió con el error ${status}. ${m}`;
+  /* Decide cómo llegar a la salida sin pedirle nada a la persona. */
+  function qualityPlan(w, h, mode) {
+    const t = targetDims(w, h, mode), long = Math.max(w, h);
+    if (mode === 'original') return { ...t, kind: 'none', input: 1, mix: 0, cas: 0 };
+    if (mode === 'detail') return { ...t, kind: 'fusion', input: long > 2400 ? 2400 / long : 1, mix: 0.6, cas: 0.5 };
+    if (long >= t.long * 1.9) return { ...t, kind: 'resize', input: 1, mix: 0, cas: 0.42 };
+    if (long >= t.long) return { ...t, kind: 'fusion', input: Math.min(1, (t.long * 0.5) / long), mix: 0.45, cas: 0.45 };
+    return { ...t, kind: 'rebuild', input: 1, mix: 0.82, cas: 0.4 };
   }
 
   /* ---------- Dimensiones y geometría ---------- */
@@ -487,7 +554,7 @@ const Core = (() => {
     const n = w * h;
     const hist = { l: new Uint32Array(256), r: new Uint32Array(256), g: new Uint32Array(256), b: new Uint32Array(256) };
     let sl = 0, sl2 = 0, sr = 0, sg = 0, sb = 0, ch = 0, lx = 0, ly = 0, lz = 0, nx = 0, ny = 0, nz = 0, nn = 0, nr = 0, ng = 0, nb = 0, alr = 0, alg = 0, alb = 0;
-    let dark = 0, skin = 0, green = 0, warmCenter = 0, center = 0, blueTop = 0, top = 0, skinCenter = 0, mid = 0;
+    let satClip = 0, dark = 0, skin = 0, green = 0, warmCenter = 0, center = 0, blueTop = 0, top = 0, skinCenter = 0, mid = 0;
     for (let y = 0, k = 0; y < h; y++) {
       const isTop = y < h * 0.35, cy = Math.abs(y / h - 0.5) < 0.3;
       for (let x = 0; x < w; x++, k += 4) {
@@ -504,6 +571,7 @@ const Core = (() => {
         lx += X; ly += Y; lz += Z;
         if (sa < 0.3 && va > 0.15 && va < 0.95) { nx += X; ny += Y; nz += Z; nr += lr; ng += lg; nb += lb; nn++; }
         if (L < 0.15) dark++;
+        if (sa > 0.85 && va > 0.5) satClip++;
         if (L > 0.2 && L < 0.8) mid++;
         const inCenter = cy && Math.abs(x / w - 0.5) < 0.3;
         const sk = isSkin(R, G, B);
@@ -547,7 +615,7 @@ const Core = (() => {
     }
     return {
       w, h, hist, mean, std, p1: cum(hist.l, 0.01), p10: cum(hist.l, 0.1), p50: cum(hist.l, 0.5), p90: cum(hist.l, 0.9), p99: cum(hist.l, 0.99), neutralRGB: nn ? [nr / nn, ng / nn, nb / nn] : null, neutralShare: nn / n, meanLin: [alr / n, alg / n, alb / n], clipHi, clipLo, meanRGB: [sr / n, sg / n, sb / n],
-      chroma: ch / n, cct: Math.round(cct / 10) * 10, labA: a, labB: bb, cast,
+      chroma: ch / n, satClip: satClip / n, cct: Math.round(cct / 10) * 10, labA: a, labB: bb, cast,
       skin: skin / n, skinCenter: center ? skinCenter / center : 0, green: green / n, warmCenter: center ? warmCenter / center : 0, skyTop: top ? blueTop / top : 0,
       dark: dark / n, mid: mid / n, edges: strong / n, aligned: strong ? aligned / strong : 0, iso: exif.iso || null, faces: null,
     };
@@ -567,15 +635,17 @@ const Core = (() => {
       : { id: 'general', label: 'General', score: Math.round(best.score), why: `ninguna regla superó 35 puntos; la más cercana fue ${best.label.toLowerCase()}`, all: r };
   }
   const SCENE_AFFINITY = {
-    retrato: { limpios: 30, calidos: 24, pelicula: 26, moody: 8, cine: 6, bn: 12 },
-    paisaje: { cine: 26, calidos: 24, limpios: 20, moody: 20, pelicula: 14, bn: 6 },
-    noche: { moody: 28, cine: 28, bn: 18, pelicula: 10, calidos: 6, limpios: -8 },
-    comida: { calidos: 30, limpios: 24, pelicula: 20, moody: 8, cine: -6, bn: -26 },
-    arquitectura: { moody: 24, bn: 24, cine: 22, limpios: 18, pelicula: 10, calidos: 4 },
-    general: { limpios: 22, calidos: 20, pelicula: 20, moody: 16, cine: 16, bn: 8 },
+    retrato: { retratos: 34, moviles: 26, limpios: 26, calidos: 22, pelicula: 22, moody: 8, cine: 8, bn: 12, viajes: 2, vintage: 8, noche: -6 },
+    paisaje: { viajes: 34, moviles: 24, cine: 22, calidos: 20, limpios: 18, moody: 16, pelicula: 14, bn: 6, vintage: 6, retratos: 0, noche: -10 },
+    noche: { noche: 36, moody: 22, cine: 24, moviles: 16, bn: 16, pelicula: 8, calidos: 4, limpios: -8, viajes: -4, retratos: 0, vintage: 0 },
+    comida: { calidos: 30, limpios: 24, moviles: 24, pelicula: 18, moody: 6, viajes: 8, retratos: 2, vintage: 6, cine: -6, noche: -14, bn: -26 },
+    arquitectura: { viajes: 22, moody: 22, bn: 22, cine: 22, moviles: 20, limpios: 16, pelicula: 10, calidos: 4, vintage: 4, retratos: 0, noche: 0 },
+    general: { moviles: 24, limpios: 20, calidos: 20, viajes: 18, pelicula: 18, retratos: 14, moody: 14, cine: 14, bn: 8, vintage: 6, noche: 0 },
   };
-  const CAT_LABEL = { limpios: 'Limpios', calidos: 'Cálidos', moody: 'Moody', cine: 'Cine', pelicula: 'Película', bn: 'Blanco y negro', custom: 'Mis presets' };
+  const CAT_LABEL = { moviles: 'Móviles', retratos: 'Retrato pro', viajes: 'Paisaje y viaje', noche: 'Noche', limpios: 'Limpios', calidos: 'Cálidos', moody: 'Moody', cine: 'Cine', pelicula: 'Película', vintage: 'Vintage', bn: 'Blanco y negro', custom: 'Mis presets' };
+  const ISSUE_TEXT = { dark: 'tu foto está oscura y este look la aclara', bright: 'tu foto está muy clara y este look la controla', flat: 'tu foto está opaca y este look le da fuerza', oversat: 'tu foto está muy saturada y este look calma el color', dull: 'el color está apagado y este look lo levanta', backlit: 'hay contraluz y este look equilibra la escena', warm: 'la luz es muy cálida y este look la compensa', cool: 'la luz es muy fría y este look la calienta' };
   function rankPresets(stats, scene, presets) {
+    const diag = diagnose(stats, scene);
     const fmtPct = (v) => `${v > 0 ? '+' : ''}${Math.round(v * 100)} %`;
     const hasSkin = scene.id === 'retrato' || stats.faces > 0 || (stats.faces !== 0 && stats.skinCenter >= 0.25);
     const list = presets.map((p) => {
@@ -598,6 +668,7 @@ const Core = (() => {
         if (hasSkin) add(m.skinHue <= 3 ? 12 : m.skinHue >= 9 ? -Math.min(m.skinHue * 1.4, 26) : 0, m.skinHue <= 3 ? `respeta la piel: la desvía solo ${m.skinHue}°` : `desvía la piel ${m.skinHue}°`);
       }
       if (scene.id === 'noche' && /(800|1600|3200)/.test(p.name)) add(12, 'película de alta sensibilidad para poca luz');
+      for (const tag of p.fits || []) if (diag.ids.has(tag) && ISSUE_TEXT[tag]) add(26, ISSUE_TEXT[tag]);
       if (scene.id === 'arquitectura' && m.bw) add(Math.min(dC * 25, 8), `blanco y negro con ${fmtPct(dC)} de contraste para líneas marcadas`);
       const score = parts.reduce((a, x) => a + x.pts, 40);
       let suggested = 100;
@@ -609,18 +680,18 @@ const Core = (() => {
       const top = parts.filter((x) => x.pts > 0).sort((a, b) => b.pts - a.pts).slice(0, 2).map((x) => x.txt);
       return { id: p.id, cat: p.cat, bw: !!m.bw, score: Math.round(score * 10) / 10, parts, reason: top.join('; ') || 'buen ajuste general', suggested, suggestedWhy: notes.join(', ') };
     }).sort((a, b) => b.score - a.score || a.id.localeCompare(b.id));
-    /* Variedad: máximo 2 en B/N y 3 de la misma categoría entre los 6 recomendados */
-    const picks = [], bwMax = scene.id === 'arquitectura' || scene.id === 'noche' ? 3 : 2;
+    /* Variedad: máximo 2 en B/N y 2 de la misma categoría entre los 8 recomendados */
+    const picks = [], bwMax = scene.id === 'arquitectura' || scene.id === 'noche' ? 2 : 1;
     const counts = {};
     for (const it of list) {
-      if (picks.length === 6) break;
+      if (picks.length === 8) break;
       counts[it.cat] = counts[it.cat] || 0;
       if (it.bw && picks.filter((x) => x.bw).length >= bwMax) continue;
-      if (counts[it.cat] >= 3) continue;
+      if (counts[it.cat] >= 2) continue;
       counts[it.cat]++;
       picks.push(it);
     }
-    for (const it of list) if (picks.length < 6 && !picks.includes(it)) picks.push(it);
+    for (const it of list) if (picks.length < 8 && !picks.includes(it)) picks.push(it);
     const set = new Set(picks.map((p) => p.id));
     const ordered = [...picks, ...list.filter((x) => !set.has(x.id))];
     return ordered.map((x) => ({ ...x, recommended: set.has(x.id) }));
@@ -818,7 +889,7 @@ const Core = (() => {
   const fmtTime = (s) => { if (!Number.isFinite(s)) return '—'; if (s < 60) return `${Math.max(1, Math.round(s))} s`; const m = Math.floor(s / 60); return m >= 60 ? `${Math.floor(m / 60)} h ${m % 60} min` : `${m} min ${Math.round(s % 60)} s`; };
 
   return {
-    clamp, lerp, clone, defaultParams, colorIsIdentity, effectiveParams, autoAdjust, nearestAspect, buildEditPrompt, parseGeminiImage, explainGeminiError, geoIsIdentity, targetDims, frameSize, geoOutputSize, geoMatrix, IDENTITY_XF, applyXf, curveToTable,
+    clamp, lerp, clone, defaultParams, colorIsIdentity, effectiveParams, autoAdjust, diagnose, casSharpen, fuseImages, qualityPlan, geoIsIdentity, targetDims, frameSize, geoOutputSize, geoMatrix, IDENTITY_XF, applyXf, curveToTable,
     haldToCube, parseCube, lutTetra, parseXmp, lanczosKernel, lanczosRegion, lanczosResize, planTiles, destRegion, blendTile, resolveAccum,
     analyzePixels, classifyScene, rankPresets, computeSkinMask, computeSkyMask, rgbToHsv, readExif, findApp1, prepareExif, insertApp1, crc32, makeZip,
     slugify, presetSlug, exportName, fmtBytes, fmtTime, CAT_LABEL, sectionIsDefault,

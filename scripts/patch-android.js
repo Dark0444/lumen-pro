@@ -52,6 +52,15 @@ gradle = gradle.replace(/versionCode\s+\d+/, `versionCode ${build}`).replace(/ve
 escribir(gradlePath, gradle);
 hechos.push(`firma y versión ${pkg.version}.${build}`);
 
+/* Barras del sistema oscuras, igual que la app */
+const estilosPath = path.join(android, 'app/src/main/res/values/styles.xml');
+let estilos = leer(estilosPath);
+if (!estilos.includes('android:navigationBarColor')) {
+  estilos = estilos.replace(/<\/style>/g, '    <item name="android:statusBarColor">#08080A</item>\n        <item name="android:navigationBarColor">#08080A</item>\n    </style>');
+  escribir(estilosPath, estilos);
+  hechos.push('barras oscuras');
+}
+
 /* Rutas para compartir el archivo temporal */
 const xmlDir = path.join(android, 'app/src/main/res/xml');
 fs.mkdirSync(xmlDir, { recursive: true });
