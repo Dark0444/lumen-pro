@@ -713,7 +713,7 @@ function syncEnhGeo() {
   if (S.enh.src) S.enh.src.close();
   S.enh = { mode: 'original', engine: 'classic', src: null, w: 0, h: 0, label: 'Sin cambios', left: null, geoKey: key };
   S.finalC = null; S.finalKey = '';
-  if (S.enhUI) S.enhUI.mode = 'original';
+  if (S.enhUI && !Core.SOCIAL_MODES.has(S.enhUI.mode)) S.enhUI.mode = 'original';
   if (had) toast('Cambiaste el recorte. Vuelve a aplicar la mejora para esta nueva composición.');
 }
 
@@ -1366,11 +1366,15 @@ async function neutralCrop() {
 const QUALITY_OPTS = [
   ['original', 'Original', 'Tu foto tal como la subiste, con tus ajustes.'],
   ['detail', 'Máxima nitidez', 'Mismo tamaño, con más definición y menos ruido.'],
-  ['1080p', '1080p', 'Lado largo de 1920 px. Ideal para redes.'],
-  ['4k', '4K', 'Lado largo de 3840 px. La mayor calidad.'],
+  ['whatsapp', 'WhatsApp y Facebook', 'Lado largo de 1600 px. Para estados, chats y publicaciones.'],
+  ['instagram', 'Instagram', '1080 px de ancho. Para publicaciones e historias.'],
+  ['perfil', 'Foto de perfil', 'Lado largo de 640 px. Mejor si la recortas en cuadrado.'],
+  ['1080p', '1080p', 'Lado largo de 1920 px.'],
+  ['4k', '4K', 'Lado largo de 3840 px. Para guardar o imprimir; las redes la reducen.'],
 ];
-function planText(plan, w, h) {
+function planText(plan, w, h, mode) {
   if (plan.kind === 'none') return 'Se conserva la resolución que subiste.';
+  if (plan.kind === 'resize' && mode && Core.SOCIAL_MODES.has(mode)) return `La dejo en ${plan.w}×${plan.h} con una nitidez suave, para que esa app tenga que reducirla lo menos posible. Tarda unos segundos.`;
   if (plan.kind === 'resize') return `Tu foto mide ${w}×${h} px y ya tiene la resolución necesaria. La llevo a ${plan.w}×${plan.h} con nitidez limpia en pocos segundos.`;
   if (plan.kind === 'fusion') return `Combino tu foto de ${w}×${h} px con reconstrucción de detalle. Se quita el ruido y se conserva la textura real. Puede tardar hasta 2 minutos.`;
   return `Tu foto mide ${w}×${h} px. Reconstruyo el detalle hasta ${plan.w}×${plan.h} con la IA incluida en la app. Puede tardar hasta 2 minutos.`;
@@ -1392,8 +1396,12 @@ function screenEnhance(host) {
   const paintEngine = () => {
     engineBox.innerHTML = ''; status.innerHTML = '';
     const plan = Core.qualityPlan(crop.w, crop.h, ui.mode);
-    engineBox.append(el('p', { class: 'note' }, planText(plan, crop.w, crop.h)));
-    engineBox.append(el('button', { class: 'btn primary', id: 'bApply', onclick: () => applyEnhance(ui, status) }, ui.mode === 'original' ? 'Usar esta calidad' : `Mejorar a ${plan.w}×${plan.h}`));
+    engineBox.append(el('p', { class: 'note' }, planText(plan, crop.w, crop.h, ui.mode)));
+    if (ui.mode === 'perfil' && crop.w !== crop.h) {
+      engineBox.append(el('p', { class: 'note' }, `Sin recortar quedaría en ${plan.w}×${plan.h} px. En cuadrado aprovecha los 640×640 px.`));
+      engineBox.append(el('button', { class: 'btn', id: 'bSquare', onclick: () => { setAspect(1); S.mode = 'recortar'; S.tab = 'geometria'; go('editar'); } }, 'Recortar en cuadrado'));
+    }
+    engineBox.append(el('button', { class: 'btn primary', id: 'bApply', onclick: () => applyEnhance(ui, status) }, ui.mode === 'original' ? 'Usar esta calidad' : `${Core.SOCIAL_MODES.has(ui.mode) ? 'Preparar' : 'Mejorar'} a ${plan.w}×${plan.h}`));
   };
   const canvasL = el('canvas', { id: 'cmpL', role: 'img', 'aria-label': 'Original' });
   const canvasR = el('canvas', { id: 'cmpR', role: 'img', 'aria-label': 'Resultado' });
@@ -1505,7 +1513,7 @@ async function applyEnhance(ui, status) {
   const signal = { cancelled: false };
   const cancelBtn = el('button', { class: 'btn small', id: 'bCancel', onclick: () => { signal.cancelled = true; aiPool.stop(); classicPool.stop(); } }, 'Cancelar');
   status.innerHTML = '';
-  status.append(el('div', { class: 'panelbox' }, el('strong', {}, 'Mejorando tu foto'), el('div', { class: 'bar-p', role: 'progressbar', 'aria-valuemin': 0, 'aria-valuemax': 100 }, bar), lbl, cancelBtn));
+  status.append(el('div', { class: 'panelbox' }, el('strong', {}, Core.SOCIAL_MODES.has(ui.mode) ? 'Preparando tu foto' : 'Mejorando tu foto'), el('div', { class: 'bar-p', role: 'progressbar', 'aria-valuemin': 0, 'aria-valuemax': 100 }, bar), lbl, cancelBtn));
   const prog = (f, txt) => { bar.style.width = `${Math.round(f * 100)}%`; bar.parentElement.setAttribute('aria-valuenow', Math.round(f * 100)); if (txt) lbl.textContent = txt; };
   S.enhBusy = true;
   const startedAt = performance.now();
@@ -1517,7 +1525,7 @@ async function applyEnhance(ui, status) {
     if (plan.kind === 'resize') {
       prog(0.3, `Reescalando a ${plan.w}×${plan.h}…`);
       result = await canvasToBitmap(await lanczosWorker(getRGBA(left), w, h, plan.w, plan.h), plan.w, plan.h);
-      label = 'Reescalado de alta calidad';
+      label = Core.SOCIAL_MODES.has(ui.mode) ? `Lista para ${QUALITY_OPTS.find(([id]) => id === ui.mode)[1]}` : 'Reescalado de alta calidad';
       cas = plan.cas;
     } else if (plan.kind !== 'none') {
       try {

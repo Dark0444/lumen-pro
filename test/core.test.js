@@ -260,6 +260,18 @@ test('catálogo: looks originales y nuevos con LUT real', () => {
   for (const id of ['clean', 'golden-hour', 'teal-orange', 'trix', 'iphone-17-pro-max', 'xiaomi-17-ultra-authentic', 'google-pixel']) assert.ok(luts.some((l) => l.id === id), id);
 });
 
+test('redes: tamaños justos y sin IA si la foto alcanza', () => {
+  assert.deepEqual([Core.targetDims(4000, 3000, 'whatsapp').w, Core.targetDims(4000, 3000, 'whatsapp').h], [1600, 1200]);
+  assert.deepEqual([Core.targetDims(3000, 4000, 'instagram').w, Core.targetDims(3000, 4000, 'instagram').h], [1080, 1440]);
+  assert.deepEqual([Core.targetDims(3000, 3000, 'perfil').w, Core.targetDims(3000, 3000, 'perfil').h], [640, 640]);
+  for (const m of ['whatsapp', 'instagram', 'perfil']) {
+    const p = Core.qualityPlan(4000, 3000, m);
+    assert.equal(p.kind, 'resize');
+    assert.ok(p.cas < 0.45);
+  }
+  assert.equal(Core.qualityPlan(800, 600, 'whatsapp').kind, 'rebuild');
+  assert.equal(Core.exportName('a.jpg', 'Clean', 'instagram', 'jpg').endsWith('_instagram.jpg'), true);
+});
 test('nombre de archivo automático', () => {
   assert.equal(Core.exportName('Foto Playa.JPG', 'Kodak Portra 400', '4k', 'jpg'), 'foto-playa_portra400_4k.jpg');
   assert.equal(Core.exportName('', null, 'original', 'png'), 'foto_sin-preset_original.png');
