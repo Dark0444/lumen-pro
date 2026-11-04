@@ -1545,16 +1545,14 @@ async function neutralCrop() {
 const QUALITY_OPTS = [
   ['original', 'Original', 'Tu foto tal como la subiste, con tus ajustes.'],
   ['detail', 'Máxima nitidez', 'Mismo tamaño, con más definición y menos ruido.'],
-  ['whatsappHd', 'WhatsApp HD', 'Lado largo de 3840 px. Al enviarla, activa HD en WhatsApp.'],
-  ['whatsapp', 'WhatsApp normal y Facebook', 'Lado largo de 1600 px. Más liviana; WhatsApp no ofrece HD con este tamaño.'],
-  ['instagram', 'Instagram', '1080 px de ancho. Para publicaciones e historias.'],
+  ['whatsappHd', 'Redes sociales', 'Se descarga lista para WhatsApp HD. Instagram y Facebook salen en su propio tamaño.'],
   ['perfil', 'Foto de perfil', 'Lado largo de 640 px. Mejor si la recortas en cuadrado.'],
   ['1080p', '1080p', 'Lado largo de 1920 px.'],
   ['4k', '4K', 'Lado largo de 3840 px. Para guardar o imprimir.'],
 ];
 function planText(plan, w, h, mode) {
   if (plan.kind === 'none') return 'Se conserva la resolución que subiste.';
-  if (plan.kind === 'resize' && mode && Core.SOCIAL_MODES.has(mode)) return `La dejo en ${plan.w}×${plan.h} y refuerzo sus bordes para que siga nítida después de la compresión de esa app. Tarda unos segundos.`;
+  if (plan.kind === 'resize' && mode && Core.SOCIAL_MODES.has(mode)) return `La dejo en ${plan.w}×${plan.h} y refuerzo sus bordes para que siga nítida después de la compresión de las redes. Tarda unos segundos.`;
   if (plan.kind === 'resize') return `Tu foto mide ${w}×${h} px y ya tiene la resolución necesaria. La llevo a ${plan.w}×${plan.h} con nitidez limpia en pocos segundos.`;
   if (plan.kind === 'fusion') return `Combino tu foto de ${w}×${h} px con reconstrucción de detalle. Se quita el ruido y se conserva la textura real. Puede tardar hasta 2 minutos.`;
   return `Tu foto mide ${w}×${h} px. Reconstruyo el detalle hasta ${plan.w}×${plan.h} con la IA incluida en la app. Puede tardar hasta 2 minutos.`;
@@ -1766,6 +1764,39 @@ async function screenDownload(host) {
   const fmtRow = el('div', { class: 'field' }, el('label', { for: 'fmt' }, 'Formato'), fmt);
   const socialNote = el('p', { class: 'note', id: 'socialNote', hidden: true }, 'Formato definido: JPG de alta calidad. Se ve igual de nítida que un PNG después de subirla y pesa mucho menos.');
   const prepBox = el('div', { style: 'display:contents' });
+  const appStatus = el('p', { class: 'note', id: 'appStatus', 'aria-live': 'polite', hidden: true });
+  const appBtn = (id, label, pkg, target) => el('button', { class: 'btn app-btn', id, onclick: (e) => shareToApp(e.currentTarget, label, pkg, target) }, label);
+  const appBox = el('div', { class: 'app-box', id: 'appBox', hidden: true },
+    el('strong', {}, 'Compartir directo'),
+    el('p', { class: 'note' }, 'Se abre la app con la foto en su tamaño ideal. No se guarda nada en tu galería.'),
+    el('div', { class: 'app-row' }, appBtn('bToWa', 'WhatsApp', 'com.whatsapp', null), appBtn('bToIg', 'Instagram', 'com.instagram.android', 'instagram'), appBtn('bToFb', 'Facebook', 'com.facebook.katana', 'facebook')), appStatus);
+  const shareToApp = async (btn, label, pkg, target) => {
+    if (!current) return;
+    const row = [...appBox.querySelectorAll('button')];
+    row.forEach((b) => { b.disabled = true; });
+    appStatus.hidden = false; appStatus.textContent = `Preparando para ${label}…`;
+    await nextFrame();
+    try {
+      let blob = current, name = nameI.value;
+      if (target) {
+        const base = await renderFinal(S.params);
+        const t = Core.targetDims(base.width, base.height, target), scale = t.w < base.width;
+        const rgba = base.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, base.width, base.height).data;
+        const w = scale ? t.w : base.width, h = scale ? t.h : base.height;
+        const sized = scale ? await lanczosWorker(rgba, base.width, base.height, w, h) : rgba;
+        const sharp = await sharpenWorker(sized, w, h, 0, target === 'instagram' ? 2.2 : 2);
+        const c = document.createElement('canvas'); c.width = w; c.height = h;
+        c.getContext('2d').putImageData(new ImageData(sharp, w, h), 0, 0);
+        blob = await encode(c, 'image/jpeg', 0.96);
+        name = Core.exportName(S.name, pName(), target, 'jpg');
+        S.shareInfo = { w, h, size: blob.size, target };
+      }
+      const r = await Native.shareTo(blob, name, pkg);
+      if (r && r.opened === false) toast(`No encontré ${label} en este teléfono. Elige otra app.`);
+      appStatus.textContent = !target ? 'En WhatsApp, toca HD antes de enviarla.' : `Lista para ${label}.`;
+    } catch (e) { appStatus.textContent = `No se pudo compartir con ${label}. ${e.message}`; }
+    finally { row.forEach((b) => { b.disabled = false; }); }
+  };
   const sizeEl = el('div', { class: 'big', id: 'estSize', 'aria-live': 'polite' }, '…');
   const nameI = el('input', { type: 'text', id: 'fname', 'aria-label': 'Nombre del archivo' });
   const dims = el('p', { class: 'note', id: 'estDims' });
@@ -1779,7 +1810,7 @@ async function screenDownload(host) {
       el('div', {}, el('div', { class: 'hint' }, 'Peso real del archivo'), sizeEl, dims),
       fmtRow, socialNote, qRow,
       el('div', { class: 'field' }, el('label', { for: 'fname' }, 'Nombre'), nameI), exifBox,
-      el('div', { class: 'row' }, dl, share), el('div', { class: 'sub' }, 'Varios looks'), zipInfo, zipBtn, el('div', { id: 'zipBar' })),
+      el('div', { class: 'row' }, dl, share), appBox, el('div', { class: 'sub' }, 'Varios looks'), zipInfo, zipBtn, el('div', { id: 'zipBar' })),
     el('div', { style: 'background:var(--stage);min-height:0;display:grid;place-items:center;padding:12px;overflow:hidden;min-width:0' }, preview)));
   const social = () => Core.SOCIAL_MODES.has(S.enh.mode);
   const fmtNow = () => (social() ? 'image/jpeg' : S.format);
@@ -1800,7 +1831,8 @@ async function screenDownload(host) {
       if (my !== token) return;
       fmtRow.hidden = social();
       socialNote.hidden = !social();
-      socialNote.textContent = S.enh.mode === 'whatsappHd' ? 'JPG de alta calidad. En WhatsApp, toca HD antes de enviarla; sin HD la reduce mucho.' : 'Formato definido: JPG de alta calidad. Se ve igual de nítida que un PNG después de subirla y pesa mucho menos.';
+      socialNote.textContent = S.enh.mode === 'whatsappHd' ? 'Descargar guarda un JPG de alta calidad para WhatsApp. Toca HD antes de enviarla; sin HD, WhatsApp la reduce mucho.' : 'Formato definido: JPG de alta calidad. Se ve igual de nítida que un PNG después de subirla y pesa mucho menos.';
+      appBox.hidden = !(Native.on && S.enh.mode === 'whatsappHd');
       qRow.hidden = social() || S.format === 'image/png';
       exifBox.hidden = social() || S.format !== 'image/jpeg';
       let b = await encode(c, fmtNow(), qNow());
@@ -1921,6 +1953,7 @@ const Native = {
   },
   async save(blob, name) { await this.send(blob, name); return window.Capacitor.Plugins.LumenNativo.save(); },
   async share(blob, name) { await this.send(blob, name); return window.Capacitor.Plugins.LumenNativo.share(); },
+  async shareTo(blob, name, pkg) { await this.send(blob, name); return window.Capacitor.Plugins.LumenNativo.shareTo({ pkg }); },
   /* Foto que llega desde Compartir o Editar en la Galería */
   bindIncoming() {
     const P = window.Capacitor.Plugins.LumenNativo;

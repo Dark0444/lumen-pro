@@ -331,6 +331,9 @@ dialog::backdrop{background:rgba(0,0,0,.7)}
 .panel-back svg{width:17px;height:17px}
 .pro-box{margin:10px 12px}
 .dock-ico svg,.panel-back svg,.knob.more svg{fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.app-box{display:flex;flex-direction:column;gap:6px;padding:12px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.app-row{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px}
+.app-btn{padding-inline:6px;font-size:var(--t-s);white-space:nowrap}
 .dock-ico{display:block;width:23px;height:23px;margin:0 auto 2px}
 .dock-ico svg{width:23px;height:23px}
 @media (max-width:900px){

@@ -262,16 +262,16 @@ test('catálogo: looks originales y nuevos con LUT real', () => {
 });
 
 test('redes: tamaños justos y sin IA si la foto alcanza', () => {
-  assert.deepEqual([Core.targetDims(4000, 3000, 'whatsapp').w, Core.targetDims(4000, 3000, 'whatsapp').h], [1600, 1200]);
   assert.deepEqual([Core.targetDims(4000, 3000, 'whatsappHd').w, Core.targetDims(4000, 3000, 'whatsappHd').h], [3840, 2880]);
   assert.deepEqual([Core.targetDims(3000, 4000, 'instagram').w, Core.targetDims(3000, 4000, 'instagram').h], [1080, 1440]);
   assert.deepEqual([Core.targetDims(3000, 3000, 'perfil').w, Core.targetDims(3000, 3000, 'perfil').h], [640, 640]);
-  for (const m of ['whatsappHd', 'whatsapp', 'instagram', 'perfil']) {
+  for (const m of ['whatsappHd', 'perfil']) {
     const p = Core.qualityPlan(4000, 3000, m);
     assert.equal(p.kind, 'resize');
     assert.ok(p.edge > 1);
   }
-  assert.equal(Core.qualityPlan(800, 600, 'whatsapp').kind, 'rebuild');
+  assert.equal(Core.qualityPlan(800, 600, 'whatsappHd').kind, 'rebuild');
+  assert.deepEqual([Core.targetDims(4000, 3000, 'facebook').w, Core.targetDims(4000, 3000, 'facebook').h], [2048, 1536]);
   assert.equal(Core.exportName('a.jpg', 'Clean', 'instagram', 'jpg').endsWith('_instagram.jpg'), true);
 });
 test('nitidez para redes: refuerza bordes y respeta zonas lisas', () => {

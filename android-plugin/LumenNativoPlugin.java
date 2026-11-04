@@ -2,6 +2,7 @@ package com.lumenpro.app;
 
 import android.content.ContentResolver;
 import android.content.ContentValues;
+import android.content.ActivityNotFoundException;
 import android.content.ClipData;
 import android.content.Intent;
 import android.database.Cursor;
@@ -207,6 +208,34 @@ public class LumenNativoPlugin extends Plugin {
             getActivity().startActivity(Intent.createChooser(send, "Compartir foto"));
             call.resolve();
         } catch (IOException | IllegalArgumentException e) {
+            call.reject(e.getMessage());
+        }
+    }
+
+    /* Abre directo la app elegida. Si no está instalada, muestra la lista de apps. */
+    @PluginMethod
+    public void shareTo(PluginCall call) {
+        try {
+            closeOut();
+            if (temp == null) throw new IOException("No hay nada que compartir.");
+            Uri uri = FileProvider.getUriForFile(getContext(), getContext().getPackageName() + ".fileprovider", temp);
+            Intent send = new Intent(Intent.ACTION_SEND);
+            send.setType(mime);
+            send.putExtra(Intent.EXTRA_STREAM, uri);
+            send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            String pkg = call.getString("pkg", "");
+            if (!pkg.isEmpty()) send.setPackage(pkg);
+            JSObject result = new JSObject();
+            try {
+                getActivity().startActivity(send);
+                result.put("opened", true);
+            } catch (ActivityNotFoundException missing) {
+                send.setPackage(null);
+                getActivity().startActivity(Intent.createChooser(send, "Compartir foto"));
+                result.put("opened", false);
+            }
+            call.resolve(result);
+        } catch (IOException | IllegalArgumentException | ActivityNotFoundException e) {
             call.reject(e.getMessage());
         }
     }

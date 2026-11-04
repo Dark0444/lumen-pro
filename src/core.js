@@ -430,14 +430,14 @@ const Core = (() => {
     const t = targetDims(w, h, mode), long = Math.max(w, h);
     if (mode === 'original') return { ...t, kind: 'none', input: 1, mix: 0, cas: 0 };
     if (mode === 'detail') return { ...t, kind: 'fusion', input: long > 2400 ? 2400 / long : 1, mix: 0.6, cas: 0.5 };
-    if (SOCIAL_MODES.has(mode) && long >= t.long) return { ...t, kind: 'resize', input: 1, mix: 0, cas: 0, edge: mode === 'whatsappHd' ? 1.6 : mode === 'whatsapp' ? 1.8 : 2.2 };
+    if (SOCIAL_MODES.has(mode) && long >= t.long) return { ...t, kind: 'resize', input: 1, mix: 0, cas: 0, edge: mode === 'whatsappHd' ? 1.6 : 2.2 };
     if (long >= t.long) return { ...t, kind: 'resize', input: 1, mix: 0, cas: 0.45 };
     return { ...t, kind: 'rebuild', input: 1, mix: 0.82, cas: 0.4 };
   }
 
   /* ---------- Dimensiones y geometría ---------- */
-  const QUALITY = { original: null, detail: null, whatsappHd: 3840, whatsapp: 1600, instagram: 1080, perfil: 640, '1080p': 1920, '4k': 3840 };
-  const SOCIAL_MODES = new Set(['whatsappHd', 'whatsapp', 'instagram', 'perfil']);
+  const QUALITY = { original: null, detail: null, whatsappHd: 3840, facebook: 2048, instagram: 1080, perfil: 640, '1080p': 1920, '4k': 3840 };
+  const SOCIAL_MODES = new Set(['whatsappHd', 'perfil']);
   function targetDims(w, h, mode) {
     const long = QUALITY[mode];
     if (!long) return { w, h, long: Math.max(w, h), upscale: false, downscale: false };
@@ -1113,7 +1113,7 @@ const Core = (() => {
     if (!name) return 'sin-preset';
     return slugify(name.replace(/^(Kodak|Fuji|Fujifilm|Agfa|Polaroid|Ilford|Rollei|Lomography)\s+/i, '')).replace(/-/g, '');
   }
-  const QUALITY_SLUG = { original: 'original', detail: 'detalle', whatsappHd: 'whatsapp-hd', whatsapp: 'whatsapp', instagram: 'instagram', perfil: 'perfil', '1080p': '1080p', '4k': '4k' };
+  const QUALITY_SLUG = { original: 'original', detail: 'detalle', whatsappHd: 'redes', facebook: 'facebook', instagram: 'instagram', perfil: 'perfil', '1080p': '1080p', '4k': '4k' };
   function exportName(file, presetName, mode, ext) { return `${slugify(file)}_${presetSlug(presetName)}_${QUALITY_SLUG[mode] || mode}.${ext}`; }
   const fmtBytes = (n) => (n >= 1048576 ? `${(n / 1048576).toFixed(n >= 10485760 ? 0 : 1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
   const fmtTime = (s) => { if (!Number.isFinite(s)) return '—'; if (s < 60) return `${Math.max(1, Math.round(s))} s`; const m = Math.floor(s / 60); return m >= 60 ? `${Math.floor(m / 60)} h ${m % 60} min` : `${m} min ${Math.round(s % 60)} s`; };

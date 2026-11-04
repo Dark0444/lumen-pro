@@ -36,6 +36,7 @@ await ctx.addInitScript(() => {
         save: async () => { log.saves++; return { uri: 'content://prueba' }; },
         share: async () => { log.shares++; },
         addListener: (type, fn) => { if (type === 'sharedImage') log.incoming = fn; },
+        shareTo: async ({ pkg }) => { log.to = pkg; log.toName = log.name; return { opened: true }; },
       },
       App: { addListener: (type, fn) => { if (type === 'backButton') log.back = fn; }, exitApp: () => { log.exit++; } },
       StatusBar: { hide: async () => log.bar.push('hide'), show: async () => log.bar.push('show'), setBackgroundColor: async () => {}, setStyle: async () => {} },
@@ -105,8 +106,8 @@ await page.evaluate(() => window.__native.back());
 check('Atrás: en la portada sale de la app', await page.evaluate(() => window.__native.exit === 1));
 check('Sin peticiones a internet', external.filter((u) => !/fonts\.g/.test(u)).length === 0, external.slice(0, 3).join(', '));
 await page.evaluate(async () => {
-  const c = document.createElement('canvas'); c.width = 1200; c.height = 900;
-  const x = c.getContext('2d'); const g = x.createLinearGradient(0, 0, 1200, 900); g.addColorStop(0, '#2a7fd0'); g.addColorStop(1, '#f2c14e'); x.fillStyle = g; x.fillRect(0, 0, 1200, 900);
+  const c = document.createElement('canvas'); c.width = 4000; c.height = 3000;
+  const x = c.getContext('2d'); const g = x.createLinearGradient(0, 0, 4000, 3000); g.addColorStop(0, '#2a7fd0'); g.addColorStop(1, '#f2c14e'); x.fillStyle = g; x.fillRect(0, 0, 4000, 3000);
   await window.__native.incoming({ path: c.toDataURL('image/png'), name: 'desde-galeria.png', mime: 'image/png' });
 });
 await page.waitForFunction(() => window.__lumen.S.name === 'desde-galeria.png' && document.querySelector('#edCanvas'), null, { timeout: 60000 });
@@ -117,7 +118,21 @@ await page.waitForFunction(() => window.__lumen.S.proFailed === window.__lumen.S
 check('Modo Pro: sin persona lo explica y no cambia la foto', await page.evaluate(() => window.__lumen.S.params.pro.amount === 0));
 await page.tap('.dock-btn[data-mode="looks"]');
 await page.tap('#bExport');
-await page.waitForSelector('.opt:has(strong:text-is("WhatsApp normal y Facebook"))');
+await page.tap('.opt:has(strong:text-is("Redes sociales"))');
+await page.tap('.step:text-is("Guardar")');
+await page.waitForFunction(() => { const d = document.querySelector('#bDownload'); return d && !d.disabled && window.__lumen.S.enh.mode === 'whatsappHd' && window.__lumen.S.finalC.width === 3840; }, null, { timeout: 180000 });
+check('Redes sociales: se prepara para WhatsApp HD', true);
+await page.tap('#bToIg');
+await page.waitForFunction(() => window.__native.to === 'com.instagram.android', null, { timeout: 120000 });
+const ig = await page.evaluate(() => ({ ...window.__lumen.S.shareInfo, name: window.__native.toName, saves: window.__native.saves }));
+check('Instagram: comparte en 1080 px sin guardar', ig.w === 1080 && /_instagram\.jpg$/.test(ig.name) && ig.saves === 1, JSON.stringify(ig));
+await page.waitForFunction(() => !document.querySelector('#bToFb').disabled);
+await page.tap('#bToFb');
+await page.waitForFunction(() => window.__native.to === 'com.facebook.katana', null, { timeout: 120000 });
+const fb = await page.evaluate(() => ({ ...window.__lumen.S.shareInfo, name: window.__native.toName, saves: window.__native.saves }));
+check('Facebook: comparte en 2048 px sin guardar', fb.w === 2048 && /_facebook\.jpg$/.test(fb.name) && fb.saves === 1, JSON.stringify(fb));
+await page.tap('.step:text-is("Calidad")');
+await page.waitForSelector('.opt:has(strong:text-is("Foto de perfil"))');
 await page.tap('.opt:has(strong:text-is("Foto de perfil"))');
 await page.tap('.step:text-is("Guardar")');
 await page.waitForFunction(() => { const d = document.querySelector('#bDownload'); return d && !d.disabled && window.__lumen.S.enh.mode === 'perfil'; }, null, { timeout: 120000 });
