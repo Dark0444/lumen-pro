@@ -3,11 +3,13 @@ const VS = `#version 300 es
 in vec2 aPos; out vec2 vUv; uniform float uFlip;
 void main(){ vUv=aPos; gl_Position=vec4(aPos.x*2.-1.,(1.-aPos.y*2.)*uFlip,0.,1.); }`;
 
-const FS_MAIN = `#version 300 es
+/* Lo marcado con PRO{ }PRO solo se compila al usar el Modo Pro: quien no lo use conserva el shader ligero */
+const FS_SOURCE = `#version 300 es
 precision highp float; precision highp sampler3D;
 in vec2 vUv; out vec4 fragColor;
-uniform sampler2D uSrc,uMask,uCurve,uBlurS,uBlurM,uMatte,uBgS; uniform vec2 uBandTap;
-uniform float uProOn,uProSubj,uProBg,uProBgSat,uProFill,uProFace,uProSkin,uBgBlur,uFeet,uPersonH; uniform sampler3D uLut;
+uniform sampler2D uSrc,uMask,uCurve,uBlurS,uBlurM; uniform vec2 uBandTap;
+/*PRO{*/uniform sampler2D uMatte,uBgS;
+uniform float uProOn,uProSubj,uProBg,uProBgSat,uProFill,uProFace,uProSkin,uBgBlur,uFeet,uPersonH;/*}PRO*/ uniform sampler3D uLut;
 uniform vec4 uTile,uSub; uniform mat3 uSrcXf,uMaskXf; uniform vec2 uTap,uOutSize;
 uniform float uLowPass,uIdentity,uLutOn,uLutMix,uLutSize,uTetra,uDither,uSplit,uShowMask,uHasBlur,uAspect;
 uniform float uExp,uCon,uHi,uSh,uWh,uBl,uTemp,uTint,uVib,uSat,uHslOn,uCurveOn,uGradeOn,uSkinProt;
@@ -90,12 +92,12 @@ void main(){
  if(uLutOn>.5&&uLutMix>0.)c=mix(c,applyLut(c),uLutMix);
  c=colorStage(c,ref,mask);
  if(uMaskOn>.5){c=local(c,uMkP,mask.r);c=local(c,uMkS,mask.g);c=local(c,uMkB,mask.b);}
- vec4 mt=vec4(0.);
+ /*PRO{*/vec4 mt=vec4(0.);
  if(uProOn>.5){mt=texture(uMatte,mu);float m=mt.r;float y0=clamp(luma(c),0.,1.);float prot=1.-smoothstep(.72,1.,y0);
   float ev=(uProSubj*m+uProFace*mt.g)*prot+uProBg*(1.-m);
   if(ev!=0.)c=l2s(s2l(c)*pow(2.,ev));
   c+=m*uProFill*pow(1.-y0,3.);
-  if(uProBgSat!=0.){float y=luma(c);c=y+(c-y)*(1.+uProBgSat*(1.-m));}}
+  if(uProBgSat!=0.){float y=luma(c);c=y+(c-y)*(1.+uProBgSat*(1.-m));}}/*}PRO*/
  if(uLowPass>.5){c=clamp(c,0.,1.);fragColor=vec4(c,min(c.r,min(c.g,c.b)));return;}
  if(uHasBlur>.5){
   vec4 bM=texture(uBlurM,ou),bS=texture(uBlurS,ou);float y=luma(c);
@@ -110,22 +112,18 @@ void main(){
   if(uHaze>0.){float t=max(1.-.92*uHaze*bM.a/max(max(uAtmos.r,max(uAtmos.g,uAtmos.b)),.2),.22);c=(c-uAtmos)/t+uAtmos;}
   else if(uHaze<0.)c=mix(c,uAtmos,-uHaze*.45);
   if(uHal>0.){float h=max(luma(bM.rgb)-.62,0.)*2.6;c+=vec3(1.,.36,.14)*h*uHal*.55;}
-  /* Piel: quita manchas de escala media y conserva la textura fina */
-  if(uProOn>.5&&uProSkin>0.){vec3 d=bS.rgb-bM.rgb;float a=1.-smoothstep(.035,.11,abs(luma(d)));c-=d*uProSkin*mt.g*a;}
+  /*PRO{*/if(uProOn>.5&&uProSkin>0.){vec3 d=bS.rgb-bM.rgb;float a=1.-smoothstep(.035,.11,abs(luma(d)));c-=d*uProSkin*mt.g*a;}/*}PRO*/
  }
  if(uSharp>0.){float g=clamp(dS*uSharp*4.,-.14,.14);c+=g;}
- /* Fondo desenfocado: el suelo junto a los pies sigue enfocado, como con un lente real */
- if(uProOn>.5&&uBgBlur>0.){float dep=1.;
+ /*PRO{*/if(uProOn>.5&&uBgBlur>0.){float dep=1.;
   if(uFeet>=0.){float dy=mu.y-uFeet,h=max(uPersonH,.08);dep=dy<0.?smoothstep(0.,h*.45,-dy):smoothstep(0.,h*.8,dy)*.75;}
   float a=uBgBlur*dep;vec4 p1=texture(uBgS,ou);
-  /* Disco de lente: las luces del fondo se abren en círculos, no en una mancha */
   vec2 rad=vec2(uAspect>=1.?1.:1./uAspect,uAspect>=1.?uAspect:1.)*.024;vec4 p2=p1*.8;
-  const vec2 D[18]=vec2[18](vec2(1.,0.),vec2(.94,.34),vec2(.77,.64),vec2(.5,.87),vec2(.17,.98),vec2(-.17,.98),vec2(-.5,.87),vec2(-.77,.64),vec2(-.94,.34),vec2(-1.,0.),vec2(-.94,-.34),vec2(-.77,-.64),vec2(-.5,-.87),vec2(-.17,-.98),vec2(.17,-.98),vec2(.5,-.87),vec2(.77,-.64),vec2(.94,-.34));
-  for(int i=0;i<18;i++){p2+=texture(uBgS,ou+D[i]*rad);p2+=texture(uBgS,ou+D[(i*5+3)%18]*rad*.55);}
+  for(int i=0;i<18;i++){float t=float(i)*.34907;vec2 d=vec2(cos(t),sin(t));p2+=texture(uBgS,ou+d*rad);d=vec2(cos(t+.17),sin(t+.17));p2+=texture(uBgS,ou+d*rad*.55);}
   vec3 f1=l2s(p1.rgb/max(p1.a,.002)),f2=l2s(p2.rgb/max(p2.a,.002));
   vec3 bg=mix(c,f1,clamp(a*2.,0.,1.));bg=mix(bg,f2,clamp(a*2.-1.,0.,1.));
   vec2 q=ou*uOutSize;bg+=(hash(q+11.3)+hash(q+47.9)-1.)*.012*a;
-  c=mix(bg,c,mt.r);}
+  c=mix(bg,c,mt.r);}/*}PRO*/
  if(uVig!=0.){vec2 d=(ou-.5)*vec2(uAspect>1.?1.:uAspect,uAspect>1.?1./uAspect:1.)*1.414;float r=dot(d,d);float v=smoothstep(.18,1.05,r);
   if(uVig<0.)c*=1.+uVig*v*1.05;else c=mix(c,vec3(1.),uVig*v*.8);}
  if(uGrain>0.){vec2 px=ou*uOutSize/uGrainSize;vec2 ip=floor(px),fp=px-ip;fp=fp*fp*(3.-2.*fp);
@@ -139,6 +137,8 @@ void main(){
 }`;
 
 /* Prepara el fondo para desenfocar: quita a la persona y trabaja en luz lineal, sin halos alrededor */
+const FS_MAIN = FS_SOURCE.replace(/\/\*PRO\{\*\/[\s\S]*?\/\*\}PRO\*\//g, '');
+const FS_PRO = FS_SOURCE.replace(/\/\*PRO\{\*\/|\/\*\}PRO\*\//g, '');
 const FS_PREM = `#version 300 es
 precision highp float; in vec2 vUv; out vec4 o; uniform sampler2D uT,uMatte; uniform mat3 uMaskXf;
 vec3 s2l(vec3 c){c=max(c,vec3(0.));return mix(c/12.92,pow((c+.055)/1.055,vec3(2.4)),step(.04045,c));}
@@ -166,7 +166,8 @@ class Renderer {
     this.maxTex = gl.getParameter(gl.MAX_TEXTURE_SIZE);
     this.main = this.program(FS_MAIN);
     this.blur = this.program(FS_BLUR);
-    this.prem = this.program(FS_PREM);
+    this.prem = null;
+    this.mainPro = null;
     this.matteTex = null;
     this.matte = null;
     const b = gl.createBuffer();
@@ -294,6 +295,11 @@ class Renderer {
     this.matteTex = this.tex2D(info.w, info.h, info.data);
   }
   proActive(p) { return !!(this.matteTex && p.pro && p.pro.amount); }
+  shaderFor(p) {
+    if (!this.proActive(p)) return this.main;
+    if (!this.mainPro) { this.mainPro = this.program(FS_PRO); this.prem = this.program(FS_PREM); }
+    return this.mainPro;
+  }
   fbo(w, h) {
     const gl = this.gl, t = gl.createTexture();
     gl.activeTexture(gl.TEXTURE7);
@@ -406,7 +412,7 @@ class Renderer {
   static mat(m) { return new Float32Array([m[0], m[3], 0, m[1], m[4], 0, m[2], m[5], 1]); }
   /* Pasadas de baja resolución para claridad, textura, neblina y halación */
   updateBlur(job, aspect) {
-    const gl = this.gl, long = job.outW * job.outH < 200000 ? 256 : 1024, low = this.ensureLow(aspect, long), pr = this.main;
+    const gl = this.gl, long = job.outW * job.outH < 200000 ? 256 : 1024, low = this.ensureLow(aspect, long), pr = this.shaderFor(job.params);
     /* Evita leer y escribir la misma textura en esta pasada */
     for (const unit of [gl.TEXTURE4, gl.TEXTURE5, gl.TEXTURE9]) { gl.activeTexture(unit); gl.bindTexture(gl.TEXTURE_2D, this.white); }
     gl.useProgram(pr.p);
@@ -459,9 +465,9 @@ class Renderer {
   }
   /* job: {src:{tex,w,h,sub?,nearest?}, lowSrc?, srcXf, lowXf?, maskXf, params, lut, intensity, outW,outH, tile:[x,y,w,h], pxW,pxH, tetra, dither, split, showMask, atmos} */
   render(job) {
-    const gl = this.gl, pr = this.main;
+    const gl = this.gl;
     if (gl.isContextLost()) return false;
-    const raw = job.params, p = Core.effectiveParams(raw, job.intensity);
+    const raw = job.params, p = Core.effectiveParams(raw, job.intensity), pr = this.shaderFor(p);
     job = { ...job, params: p };
     const c = this.canvas;
     if (c.width !== job.pxW || c.height !== job.pxH) { c.width = job.pxW; c.height = job.pxH; }
