@@ -1545,11 +1545,12 @@ async function neutralCrop() {
 const QUALITY_OPTS = [
   ['original', 'Original', 'Tu foto tal como la subiste, con tus ajustes.'],
   ['detail', 'Máxima nitidez', 'Mismo tamaño, con más definición y menos ruido.'],
-  ['whatsapp', 'WhatsApp y Facebook', 'Lado largo de 1600 px. Para estados, chats y publicaciones.'],
+  ['whatsappHd', 'WhatsApp HD', 'Lado largo de 3840 px. Al enviarla, activa HD en WhatsApp.'],
+  ['whatsapp', 'WhatsApp normal y Facebook', 'Lado largo de 1600 px. Más liviana; WhatsApp no ofrece HD con este tamaño.'],
   ['instagram', 'Instagram', '1080 px de ancho. Para publicaciones e historias.'],
   ['perfil', 'Foto de perfil', 'Lado largo de 640 px. Mejor si la recortas en cuadrado.'],
   ['1080p', '1080p', 'Lado largo de 1920 px.'],
-  ['4k', '4K', 'Lado largo de 3840 px. Para guardar o imprimir; las redes la reducen.'],
+  ['4k', '4K', 'Lado largo de 3840 px. Para guardar o imprimir.'],
 ];
 function planText(plan, w, h, mode) {
   if (plan.kind === 'none') return 'Se conserva la resolución que subiste.';
@@ -1799,6 +1800,7 @@ async function screenDownload(host) {
       if (my !== token) return;
       fmtRow.hidden = social();
       socialNote.hidden = !social();
+      socialNote.textContent = S.enh.mode === 'whatsappHd' ? 'JPG de alta calidad. En WhatsApp, toca HD antes de enviarla; sin HD la reduce mucho.' : 'Formato definido: JPG de alta calidad. Se ve igual de nítida que un PNG después de subirla y pesa mucho menos.';
       qRow.hidden = social() || S.format === 'image/png';
       exifBox.hidden = social() || S.format !== 'image/jpeg';
       let b = await encode(c, fmtNow(), qNow());

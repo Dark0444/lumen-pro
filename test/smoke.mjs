@@ -117,7 +117,7 @@ await page.waitForFunction(() => window.__lumen.S.proFailed === window.__lumen.S
 check('Modo Pro: sin persona lo explica y no cambia la foto', await page.evaluate(() => window.__lumen.S.params.pro.amount === 0));
 await page.tap('.dock-btn[data-mode="looks"]');
 await page.tap('#bExport');
-await page.waitForSelector('.opt:has(strong:text-is("WhatsApp y Facebook"))');
+await page.waitForSelector('.opt:has(strong:text-is("WhatsApp normal y Facebook"))');
 await page.tap('.opt:has(strong:text-is("Foto de perfil"))');
 await page.tap('.step:text-is("Guardar")');
 await page.waitForFunction(() => { const d = document.querySelector('#bDownload'); return d && !d.disabled && window.__lumen.S.enh.mode === 'perfil'; }, null, { timeout: 120000 });
