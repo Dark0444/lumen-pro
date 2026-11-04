@@ -281,6 +281,31 @@ test('nitidez para redes: refuerza bordes y respeta zonas lisas', () => {
   assert.ok(o[(10 * W + 19) * 4] < a[(10 * W + 19) * 4]);
   assert.equal(o[3], 255);
 });
+test('modo pro: conserva al sujeto, ubica los pies y descarta personas lejanas', () => {
+  const W = 200, H = 200, rgba = new Uint8ClampedArray(W * H * 4), bg = new Float32Array(W * H).fill(1), skin = new Float32Array(W * H), face = new Float32Array(W * H);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const k = (y * W + x) * 4, main = x >= 70 && x < 130 && y >= 40 && y < 160, far = x >= 170 && x < 178 && y >= 60 && y < 76;
+    const v = main || far ? 40 : 200;
+    rgba[k] = rgba[k + 1] = rgba[k + 2] = v; rgba[k + 3] = 255;
+    if (main || far) bg[y * W + x] = 0;
+    if (main && y < 70) { face[y * W + x] = 1; skin[y * W + x] = 1; }
+  }
+  const m = Core.proMatte(rgba, W, H, { w: W, h: H, bg, skin, face });
+  assert.equal(m.person, true);
+  const at = (x, y) => m.data[(y * W + x) * 4];
+  assert.ok(at(100, 100) > 240);
+  assert.ok(at(20, 100) < 10);
+  assert.ok(at(174, 68) < 10);
+  assert.equal(m.others, 1);
+  assert.ok(Math.abs(m.feet - 0.8) < 0.02);
+  assert.ok(Math.abs(m.personH - 0.6) < 0.03);
+  assert.ok(m.subjEv > 0);
+  assert.ok(m.data[(50 * W + 100) * 4 + 2] > 200);
+  assert.equal(Core.proMatte(rgba, W, H, { w: W, h: H, bg: new Float32Array(W * H).fill(1), skin, face }).person, false);
+  assert.equal(Core.colorIsIdentity(Core.defaultParams()), true);
+  const p = Core.defaultParams(); p.pro.amount = 50;
+  assert.equal(Core.colorIsIdentity(p), false);
+});
 test('nombre de archivo automático', () => {
   assert.equal(Core.exportName('Foto Playa.JPG', 'Kodak Portra 400', '4k', 'jpg'), 'foto-playa_portra400_4k.jpg');
   assert.equal(Core.exportName('', null, 'original', 'png'), 'foto_sin-preset_original.png');

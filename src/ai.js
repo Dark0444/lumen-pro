@@ -47,6 +47,9 @@ function workerBody() {
       } else if (m.type === 'sharpen') {
         const out = m.edge ? Core.edgeSharpen(m.rgba, m.w, m.h, m.edge) : Core.casSharpen(m.rgba, m.w, m.h, m.amount);
         reply(m.id, { rgba: out }, [out.buffer]);
+      } else if (m.type === 'matte') {
+        const out = Core.proMatte(m.rgba, m.w, m.h, m.seg, m.seg2, m.box);
+        reply(m.id, out, out.data ? [out.data.buffer] : []);
       } else if (m.type === 'fuse') {
         const out = Core.fuseImages(m.ai, m.base, m.mix);
         reply(m.id, { rgba: out }, [out.buffer]);
@@ -137,6 +140,7 @@ const sharpenWorker = async (rgba, w, h, amount, edge) => {
   const copy = new Uint8ClampedArray(rgba);
   return (await classicPool.call({ type: 'sharpen', rgba: copy, w, h, amount, edge }, [copy.buffer])).rgba;
 };
+const matteWorker = async (rgba, w, h, seg, seg2, box) => classicPool.call({ type: 'matte', rgba, w, h, seg, seg2, box }, [rgba.buffer]);
 const fuseWorker = async (ai, base, mix) => {
   const a = new Uint8ClampedArray(ai), b = new Uint8ClampedArray(base);
   return (await classicPool.call({ type: 'fuse', ai: a, base: b, mix }, [a.buffer, b.buffer])).rgba;
@@ -224,7 +228,7 @@ const Vision = {
     const w = r.confidenceMasks[0].width, h = r.confidenceMasks[0].height;
     const bg = get(0).slice(), body = get(2).slice(), face = get(3).slice();
     r.confidenceMasks.forEach((m) => m.close());
-    return { w, h, bg, skin: body.map((v, i) => Math.min(1, v + face[i])) };
+    return { w, h, bg, face, skin: body.map((v, i) => Math.min(1, v + face[i])) };
   },
 };
 

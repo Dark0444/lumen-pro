@@ -102,6 +102,11 @@ await page.evaluate(async () => {
 });
 await page.waitForFunction(() => window.__lumen.S.name === 'desde-galeria.png' && document.querySelector('#edCanvas'), null, { timeout: 60000 });
 check('Una foto compartida desde la Galería abre en el editor', true);
+await page.tap('.dock-btn[data-mode="pro"]');
+await page.tap('#bPro');
+await page.waitForFunction(() => window.__lumen.S.proFailed === window.__lumen.S.baseId, null, { timeout: 120000 });
+check('Modo Pro: sin persona lo explica y no cambia la foto', await page.evaluate(() => window.__lumen.S.params.pro.amount === 0));
+await page.tap('.dock-btn[data-mode="looks"]');
 await page.tap('.step:text-is("Calidad")');
 await page.waitForSelector('.opt:has(strong:text-is("WhatsApp y Facebook"))');
 await page.tap('.opt:has(strong:text-is("Foto de perfil"))');

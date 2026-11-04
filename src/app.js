@@ -105,8 +105,9 @@ async function ensureLut(id) {
 function paramsFor(id) {
   const p = S.presets.get(id);
   const auto = S.params.auto;
-  if (p && p.params) { const q = Core.clone(p.params); q.presetId = id; q.intensity = 100; q.xmpOverlay = true; q.auto = auto; return q; }
+  if (p && p.params) { const q = Core.clone(p.params); q.presetId = id; q.intensity = 100; q.xmpOverlay = true; q.auto = auto; q.pro = S.params.pro; return q; }
   const q = Core.defaultParams();
+  q.pro = S.params.pro;
   q.presetId = id; q.intensity = 100; q.auto = auto; q.recipe = p && p.fin ? p.fin : null;
   return q;
 }
@@ -166,6 +167,7 @@ async function loadFile(file, restore) {
     S.announce = `${S.autoInfo.title}`;
     go('editar');
     detectFaces();
+    if (S.params.pro && S.params.pro.amount) ensureMatte().then(() => { S.stripCache.clear(); requestRender(false); }).catch(() => {});
     IDB.set('project', { blob: file, name: S.name, params: S.params });
   } catch (e) { toast(e.message, 'err'); } finally { setBusy(false); }
 }
@@ -177,7 +179,7 @@ function applyBase(bmp, blob, isEdit) {
   S.exif = isEdit ? {} : (S.exif0 || {});
   S.baseId += 1;
   S.stripCache.clear();
-  S.person = null; S.personSkin = null;
+  S.person = null; S.personSkin = null; S.matteBase = 0; R.setMatte(null);
   S.thumbC = scaleCanvas(bmp, S.W, S.H, 512);
   S.previewC = scaleCanvas(bmp, S.W, S.H, 1600);
   S.thumbTex = R.uploadImage(S.thumbC, S.thumbTex);
@@ -529,7 +531,7 @@ function markStrip() {
   });
 }
 function thumbCache(id) {
-  const key = `${S.baseId}|${S.params.auto.amount}|${id}`;
+  const key = `${S.baseId}|${S.params.auto.amount}|${JSON.stringify(R.proActive(S.params) ? S.params.pro : 0)}|${id}`;
   return { key, hit: S.stripCache.get(key) };
 }
 function paintStrip() {
@@ -556,7 +558,7 @@ function paintStrip() {
       const canvas = el('canvas', { width: tw, height: th, 'aria-hidden': 'true' });
       const pic = el('span', { class: 'thumb-pic wait' }, canvas, el('i', { class: 'fix-badge', 'aria-hidden': 'true' }, '✦'));
       strip.append(el('button', { class: 'thumb fix', 'data-fix': f.id, 'aria-label': `Sugerencia: ${f.name}. ${f.issue}`, 'aria-pressed': 'false', onclick: () => toggleFix(f) }, pic, el('span', { class: 'thumb-name' }, f.name)));
-      const key = `fix|${S.baseId}|${S.params.auto.amount}|${f.id}`, hit = S.stripCache.get(key);
+      const key = `fix|${S.baseId}|${S.params.auto.amount}|${JSON.stringify(R.proActive(S.params) ? S.params.pro : 0)}|${f.id}`, hit = S.stripCache.get(key);
       if (hit) { canvas.getContext('2d').drawImage(hit, 0, 0); pic.classList.remove('wait'); } else queue.unshift({ fix: f, canvas, pic, key });
     });
     strip.append(el('span', { class: 'strip-sep', 'aria-hidden': 'true' }));
@@ -574,7 +576,7 @@ async function generateThumbs(queue, tw, th) {
     try {
       if (id) await ensureLut(id);
       if (S.thumbToken !== token) return;
-      const p = id ? paramsFor(id) : { ...Core.defaultParams(), auto: S.params.auto, fix: fix ? fix.fix : null };
+      const p = id ? paramsFor(id) : { ...Core.defaultParams(), auto: S.params.auto, pro: S.params.pro, fix: fix ? fix.fix : null };
       R.render({ src: { tex: S.thumbTex, w: S.thumbC.width, h: S.thumbC.height }, lowSrc: { tex: S.thumbTex }, params: p, lut: getLut(id), intensity: id ? 100 : 0, outW: tw, outH: th, pxW: tw, pxH: th, dither: false, atmos: S.atmos, maskXf: Core.IDENTITY_XF });
       canvas.getContext('2d').drawImage(R.canvas, 0, 0, canvas.width, canvas.height);
       const copy = document.createElement('canvas');
@@ -660,7 +662,7 @@ function applyCustomParams(id, replace) {
   const p = S.presets.get(id);
   if (p && p.params && replace) {
     const keep = S.params.geo, auto = S.params.auto, q = Core.clone(p.params);
-    q.presetId = id; q.intensity = 100; q.geo = keep; q.auto = auto; q.xmpOverlay = true;
+    q.presetId = id; q.intensity = 100; q.geo = keep; q.auto = auto; q.xmpOverlay = true; q.pro = S.params.pro;
     S.params = q;
   }
 }
@@ -729,7 +731,7 @@ const SECTIONS = {
   detalle: { title: 'Detalle', key: 'detail', items: [['sharpen', 'Nitidez', 0, 100, 1], ['clarity', 'Claridad', -100, 100, 1], ['texture', 'Textura', -100, 100, 1], ['denoise', 'Reducción de ruido', 0, 100, 1], ['dehaze', 'Eliminar neblina', -100, 100, 1]] },
   efectos: { title: 'Efectos', key: 'fx', items: [['vignette', 'Viñeta', -100, 100, 1], ['grain', 'Grano', 0, 100, 1], ['halation', 'Halación', 0, 100, 1]] },
 };
-const TABS = [['auto', 'Auto'], ['luz', 'Luz'], ['color', 'Color'], ['curvas', 'Curvas'], ['etalonaje', 'Etalonaje'], ['detalle', 'Detalle'], ['efectos', 'Efectos'], ['geometria', 'Geometría'], ['mascaras', 'Máscaras']];
+const TABS = [['pro', 'Pro'], ['auto', 'Auto'], ['luz', 'Luz'], ['color', 'Color'], ['curvas', 'Curvas'], ['etalonaje', 'Etalonaje'], ['detalle', 'Detalle'], ['efectos', 'Efectos'], ['geometria', 'Geometría'], ['mascaras', 'Máscaras']];
 const HSL_LABEL = ['Rojo', 'Naranja', 'Amarillo', 'Verde', 'Aguamarina', 'Azul', 'Púrpura', 'Magenta'];
 const HSL_CSS = ['#d9423a', '#e88a2c', '#e7c62d', '#47a84a', '#35b5ad', '#3b6fd6', '#8c52c9', '#d04aa5'];
 function sliderRow(id, label, min, max, step, get, set, unit = '') {
@@ -750,6 +752,7 @@ function sectionModified(tab) {
   const d = Core.defaultParams(), p = S.params;
   const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
   if (tab === 'auto') return !!p.auto.amount || !!p.fix;
+  if (tab === 'pro') return !!(p.pro && p.pro.amount);
   if (tab === 'luz') return !same(p.light, d.light);
   if (tab === 'color') return !same(p.color, d.color);
   if (tab === 'curvas') return !same(p.curves, d.curves);
@@ -771,7 +774,25 @@ function paintPanel() {
   document.querySelectorAll('.tab').forEach((b) => { b.classList.toggle('on', b.dataset.tab === t); b.setAttribute('aria-selected', String(b.dataset.tab === t)); });
   paintTabMarks();
   const head = (title, fn) => el('div', { class: 'panel-head' }, el('h3', {}, title), resetBtn(t, fn));
-  if (t === 'auto') {
+  if (t === 'pro') {
+    const pro = S.params.pro;
+    if (!pro.amount && S.proFailed !== S.baseId) {
+      const go2 = el('button', { class: 'btn primary', id: 'bPro', onclick: () => applyPro(go2) }, 'Aplicar Modo Pro');
+      panel.append(el('div', { class: 'panelbox pro-box' }, el('strong', {}, 'Foto de sesión profesional'),
+        el('p', { class: 'note' }, 'Separa a la persona, desenfoca el fondo como un lente profesional, mejora la luz del rostro y empareja la piel sin dejarla de plástico.'), go2));
+    } else if (S.proFailed === S.baseId) {
+      panel.append(el('div', { class: 'panelbox' }, el('strong', {}, 'No encontré a una persona'), el('p', { class: 'note' }, 'El Modo Pro necesita a alguien en la foto. Prueba con una foto donde se vea mejor.')));
+    } else {
+      panel.append(el('div', { class: 'panel-head' }, el('h3', {}, 'Modo Pro'), el('button', { class: 'btn small', onclick: () => { S.params.pro = Core.defaultParams().pro; S.stripCache.clear(); commit(); invalidateEnh(); paintPanel(); paintTabMarks(); paintStrip(); requestRender(false); } }, 'Quitar')));
+      const row = (id, label, key) => panel.append(sliderRow(id, label, 0, 100, 1, Object.assign(() => pro[key], { def: Core.defaultParams().pro[key] }), (v) => { pro[key] = v; S.stripCache.clear(); }, ' %'));
+      row('pro-amount', 'Fuerza', 'amount');
+      row('pro-blur', 'Fondo', 'blur');
+      row('pro-subject', 'Persona', 'subject');
+      row('pro-face', 'Rostro', 'face');
+      row('pro-skin', 'Piel', 'skin');
+      if (S.matteInfo && S.matteInfo.others) panel.append(el('p', { class: 'note' }, 'Dejé enfocada solo a la persona principal.'));
+    }
+  } else if (t === 'auto') {
     const info = S.autoInfo, a = S.params.auto;
     panel.append(el('div', { class: 'auto-badge' }, info.label));
     const fixBox = el('div', { class: 'seg' });
@@ -839,8 +860,8 @@ function paintPanel() {
     if (!S.person) {
       const box = el('div', { class: 'panelbox' },
         el('strong', {}, 'Detectar persona con IA'),
-        el('p', { class: 'note' }, 'Descarga una vez MediaPipe y su modelo (unos 26 MB). La foto se analiza aquí y no se envía.'));
-      const b = el('button', { class: 'btn small primary', id: 'bSeg', onclick: () => runSegment(b) }, 'Descargar y detectar');
+        el('p', { class: 'note' }, 'El modelo viene incluido en la app. La foto se analiza aquí y no se envía.'));
+      const b = el('button', { class: 'btn small primary', id: 'bSeg', onclick: () => runSegment(b) }, 'Detectar persona');
       box.append(b);
       panel.append(box);
     }
@@ -865,7 +886,7 @@ function paintPanel() {
   panel.scrollTop = top;
   compactPanel(panel, t);
 }
-const COMPACT_TABS = new Set(['luz', 'color', 'etalonaje', 'detalle', 'efectos']);
+const COMPACT_TABS = new Set(['pro', 'luz', 'color', 'etalonaje', 'detalle', 'efectos']);
 /* En el teléfono: un solo deslizador a la vez para que la foto conserve el espacio */
 function compactPanel(panel, t) {
   const st = $('#studio');
@@ -897,23 +918,72 @@ function compactPanel(panel, t) {
   panel.prepend(pills);
   show();
 }
+/* Separa a la persona una sola vez por foto y deja listo el recorte fino */
+function ensureMatte() {
+  if (S.matteBase === S.baseId && S.matteInfo) return Promise.resolve(S.matteInfo);
+  if (S.mattePending && S.mattePending.base === S.baseId) return S.mattePending.p;
+  const base = S.baseId;
+  const p = (async () => {
+    const r = await Vision.segment(S.previewC);
+    applySegmentation(r);
+    /* Segunda lectura acercada a la persona: el modelo ve menos de 256 px y así no pierde hombros ni cabello */
+    const box = Core.segmentBox(r);
+    let r2 = null;
+    if (box) {
+      const P = S.previewC, cw = Math.max(1, Math.round(box.w * P.width)), ch = Math.max(1, Math.round(box.h * P.height));
+      const crop = document.createElement('canvas');
+      crop.width = cw; crop.height = ch;
+      crop.getContext('2d').drawImage(P, box.x * P.width, box.y * P.height, cw, ch, 0, 0, cw, ch);
+      r2 = await Vision.segment(crop);
+    }
+    const m = sampleOf(1024);
+    const out = await matteWorker(new Uint8ClampedArray(m.rgba), m.w, m.h, r, r2, box);
+    if (base !== S.baseId) return null;
+    S.matteBase = base;
+    S.matteInfo = out.person ? { ...out, data: null } : { person: false };
+    if (out.person) R.setMatte(out);
+    return S.matteInfo;
+  })().finally(() => { S.mattePending = null; });
+  S.mattePending = { base, p };
+  return p;
+}
+async function applyPro(btn) {
+  btn.disabled = true; btn.textContent = 'Separando a la persona…';
+  await nextFrame();
+  try {
+    const info = await ensureMatte();
+    if (!info) return;
+    if (!info.person) { S.proFailed = S.baseId; toast('No encontré a una persona en esta foto.', 'err'); paintPanel(); return; }
+    S.params.pro.amount = 100;
+    S.stripCache.clear();
+    commit(); invalidateEnh(); paintPanel(); paintTabMarks(); paintStrip(); requestRender(false);
+    haptic();
+  } catch (e) {
+    btn.disabled = false; btn.textContent = 'Reintentar';
+    toast('No se pudo separar a la persona en este dispositivo.', 'err');
+  }
+}
+function applySegmentation(r) {
+  const W = S.maskW, H = S.maskH, person = new Float32Array(W * H), skin = new Float32Array(W * H);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const sx = Math.min(r.w - 1, Math.round((x / (W - 1 || 1)) * (r.w - 1))), sy = Math.min(r.h - 1, Math.round((y / (H - 1 || 1)) * (r.h - 1))), k = sy * r.w + sx;
+    person[y * W + x] = 1 - r.bg[k]; skin[y * W + x] = r.skin[k];
+  }
+  S.person = person; S.personSkin = skin;
+  rebuildMask();
+  return person;
+}
 async function runSegment(btn) {
-  btn.disabled = true; btn.textContent = 'Descargando modelo…';
+  btn.disabled = true; btn.textContent = 'Detectando…';
   try {
     const r = await Vision.segment(S.previewC);
-    const W = S.maskW, H = S.maskH, person = new Float32Array(W * H), skin = new Float32Array(W * H);
-    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
-      const sx = Math.min(r.w - 1, Math.round((x / (W - 1 || 1)) * (r.w - 1))), sy = Math.min(r.h - 1, Math.round((y / (H - 1 || 1)) * (r.h - 1))), k = sy * r.w + sx;
-      person[y * W + x] = 1 - r.bg[k]; skin[y * W + x] = r.skin[k];
-    }
-    S.person = person; S.personSkin = skin;
+    const person = applySegmentation(r);
     if (![...person].some((v) => v > 0.5)) toast('El modelo no encontró a ninguna persona en esta foto.');
-    rebuildMask();
     S.maskTab = 'person';
     paintPanel(); requestRender(false);
   } catch (e) {
     btn.disabled = false; btn.textContent = 'Reintentar';
-    toast('No se pudo descargar el modelo de personas. Revisa tu conexión a internet. Cielo y piel siguen disponibles sin él.', 'err');
+    toast('No se pudo detectar a la persona en este dispositivo. Cielo y piel siguen disponibles.', 'err');
   }
 }
 function rotate(d) { S.params.geo.rot90 = (S.params.geo.rot90 + d + 4) % 4; S.params.geo.crop = { x: 0, y: 0, w: 1, h: 1 }; if (S.params.geo.aspect) setAspect(S.params.geo.aspect); afterGeo(); }
@@ -1117,7 +1187,7 @@ function screenEditor(host) {
   const stripWrap = el('div', { class: 'strip-wrap' }, intensity, diag, stripChips, strip);
 
   const dock = el('nav', { class: 'dock', 'aria-label': 'Herramientas' },
-    [['looks', 'Looks'], ['auto', 'Auto'], ['ajustes', 'Ajustes'], ['recortar', 'Recortar']].map(([id, label]) => el('button', { class: 'dock-btn', 'data-mode': id, onclick: () => setMode(id) }, label)));
+    [['looks', 'Looks'], ['pro', 'Pro'], ['auto', 'Auto'], ['ajustes', 'Ajustes'], ['recortar', 'Recortar']].map(([id, label]) => el('button', { class: 'dock-btn', 'data-mode': id, onclick: () => setMode(id) }, label)));
 
   const tabs = el('div', { class: 'tabs', role: 'tablist', 'aria-label': 'Secciones de edición' }, TABS.map(([id, label]) => el('button', { class: 'tab', role: 'tab', 'data-tab': id, onclick: () => setTab(id) }, label)));
   const side = el('aside', { class: 'side' },
@@ -1148,8 +1218,9 @@ function setMode(id) {
   const st = $('#studio');
   if (st) st.dataset.mode = id;
   if (id === 'auto') setTab('auto');
+  else if (id === 'pro') setTab('pro');
   else if (id === 'recortar') setTab('geometria');
-  else if (id === 'ajustes') setTab(S.tab === 'auto' || S.tab === 'geometria' ? 'luz' : S.tab);
+  else if (id === 'ajustes') setTab(S.tab === 'auto' || S.tab === 'pro' || S.tab === 'geometria' ? 'luz' : S.tab);
   else if (S.tab === 'geometria') setTab('luz');
   paintDock();
   requestRender(false);

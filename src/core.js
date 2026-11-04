@@ -22,6 +22,7 @@ const Core = (() => {
       background: { exposure: 0, contrast: 0, saturation: 0, temp: 0 },
       skinProtect: 0,
     },
+    pro: { amount: 0, blur: 60, subject: 60, skin: 45, face: 55 },
   });
   const clone = (o) => JSON.parse(JSON.stringify(o));
 
@@ -32,7 +33,7 @@ const Core = (() => {
     const d = defaultParams();
     const lutOff = !p.presetId || p.intensity === 0;
     const autoOff = !p.auto || !p.auto.amount;
-    return lutOff && autoOff && !p.fix && sectionIsDefault(p.light, d.light) && sectionIsDefault(p.color, d.color) && sectionIsDefault(p.curves, d.curves)
+    return lutOff && autoOff && !p.fix && !(p.pro && p.pro.amount) && sectionIsDefault(p.light, d.light) && sectionIsDefault(p.color, d.color) && sectionIsDefault(p.curves, d.curves)
       && sectionIsDefault(p.grade, d.grade) && sectionIsDefault(p.detail, d.detail) && sectionIsDefault(p.fx, d.fx)
       && sectionIsDefault(p.masks, d.masks) && !p.xmpOverlay;
   }
@@ -227,6 +228,165 @@ const Core = (() => {
       }
     }
     return out;
+  }
+  /* ---------- Modo Pro: recorte fino de la persona ---------- */
+  function boxMean(src, w, h, r) {
+    const tmp = new Float32Array(w * h), out = new Float32Array(w * h);
+    for (let y = 0; y < h; y++) {
+      const o = y * w;
+      let s = 0, n = 0;
+      for (let x = 0; x <= Math.min(r, w - 1); x++) { s += src[o + x]; n++; }
+      for (let x = 0; x < w; x++) {
+        tmp[o + x] = s / n;
+        if (x + r + 1 < w) { s += src[o + x + r + 1]; n++; }
+        if (x - r >= 0) { s -= src[o + x - r]; n--; }
+      }
+    }
+    const sum = new Float64Array(w);
+    let n = 0;
+    for (let y = 0; y <= Math.min(r, h - 1); y++) { const o = y * w; for (let x = 0; x < w; x++) sum[x] += tmp[o + x]; n++; }
+    for (let y = 0; y < h; y++) {
+      const o = y * w;
+      for (let x = 0; x < w; x++) out[o + x] = sum[x] / n;
+      if (y + r + 1 < h) { const a = (y + r + 1) * w; for (let x = 0; x < w; x++) sum[x] += tmp[a + x]; n++; }
+      if (y - r >= 0) { const a = (y - r) * w; for (let x = 0; x < w; x++) sum[x] -= tmp[a + x]; n--; }
+    }
+    return out;
+  }
+  /* Filtro guiado: pega el borde de la máscara a los bordes reales de la foto */
+  function guidedFilter(I, p, w, h, r, eps) {
+    const n = w * h, II = new Float32Array(n), Ip = new Float32Array(n);
+    for (let i = 0; i < n; i++) { II[i] = I[i] * I[i]; Ip[i] = I[i] * p[i]; }
+    const mI = boxMean(I, w, h, r), mP = boxMean(p, w, h, r), mII = boxMean(II, w, h, r), mIp = boxMean(Ip, w, h, r);
+    const a = new Float32Array(n), b = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+      a[i] = (mIp[i] - mI[i] * mP[i]) / (mII[i] - mI[i] * mI[i] + eps);
+      b[i] = mP[i] - a[i] * mI[i];
+    }
+    const mA = boxMean(a, w, h, r), mB = boxMean(b, w, h, r), q = new Float32Array(n);
+    for (let i = 0; i < n; i++) q[i] = mA[i] * I[i] + mB[i];
+    return q;
+  }
+  function resampleBilinear(src, sw, sh, w, h) {
+    const out = new Float32Array(w * h);
+    for (let y = 0; y < h; y++) {
+      const fy = h > 1 ? (y / (h - 1)) * (sh - 1) : 0, y0 = Math.floor(fy), y1 = Math.min(sh - 1, y0 + 1), ty = fy - y0;
+      for (let x = 0; x < w; x++) {
+        const fx = w > 1 ? (x / (w - 1)) * (sw - 1) : 0, x0 = Math.floor(fx), x1 = Math.min(sw - 1, x0 + 1), tx = fx - x0;
+        const a = src[y0 * sw + x0] * (1 - tx) + src[y0 * sw + x1] * tx, b = src[y1 * sw + x0] * (1 - tx) + src[y1 * sw + x1] * tx;
+        out[y * w + x] = a * (1 - ty) + b * ty;
+      }
+    }
+    return out;
+  }
+  /* Deja al sujeto principal y descarta personas pequeñas del fondo */
+  function keepMainSubject(p, w, h) {
+    const n = w * h, labels = new Int32Array(n), stack = new Int32Array(n), comps = [];
+    for (let i = 0; i < n; i++) {
+      if (labels[i] || p[i] <= 0.5) continue;
+      const id = comps.length + 1;
+      let sp = 0, area = 0, x0 = w, y0 = h, x1 = 0, y1 = 0;
+      stack[sp++] = i; labels[i] = id;
+      while (sp) {
+        const k = stack[--sp], x = k % w, y = (k - x) / w;
+        area++;
+        if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+        if (x > 0 && !labels[k - 1] && p[k - 1] > 0.5) { labels[k - 1] = id; stack[sp++] = k - 1; }
+        if (x < w - 1 && !labels[k + 1] && p[k + 1] > 0.5) { labels[k + 1] = id; stack[sp++] = k + 1; }
+        if (y > 0 && !labels[k - w] && p[k - w] > 0.5) { labels[k - w] = id; stack[sp++] = k - w; }
+        if (y < h - 1 && !labels[k + w] && p[k + w] > 0.5) { labels[k + w] = id; stack[sp++] = k + w; }
+      }
+      comps.push({ id, area, x0, y0, x1, y1 });
+    }
+    if (!comps.length) return { p, kept: 0, removed: 0 };
+    const big = Math.max(...comps.map((q) => q.area)), keep = comps.filter((q) => q.area >= big * 0.25), drop = comps.filter((q) => q.area < big * 0.25);
+    const ids = new Set(keep.map((q) => q.id)), pad = Math.round(Math.max(w, h) * 0.012);
+    const out = p.slice();
+    for (const d of drop) {
+      /* Solo se borra lo que está pegado a esa persona; nada de lo que rodea al sujeto principal */
+      const near = new Uint8Array(n);
+      for (let y = Math.max(0, d.y0); y <= d.y1; y++) for (let x = Math.max(0, d.x0); x <= d.x1; x++) {
+        if (labels[y * w + x] !== d.id) continue;
+        for (let dy = -pad; dy <= pad; dy++) for (let dx = -pad; dx <= pad; dx++) {
+          const yy = y + dy, xx = x + dx;
+          if (yy >= 0 && yy < h && xx >= 0 && xx < w) near[yy * w + xx] = 1;
+        }
+      }
+      for (let y = Math.max(0, d.y0 - pad); y <= Math.min(h - 1, d.y1 + pad); y++) for (let x = Math.max(0, d.x0 - pad); x <= Math.min(w - 1, d.x1 + pad); x++) {
+        const k = y * w + x;
+        if (near[k] && !ids.has(labels[k])) out[k] = Math.min(out[k], labels[k] ? 0 : p[k] * 0.3);
+      }
+    }
+    return { p: out, kept: keep.length, removed: drop.length };
+  }
+  /* Encuadre cuadrado alrededor de la persona para una segunda lectura con más detalle */
+  function segmentBox(seg) {
+    const person = new Float32Array(seg.w * seg.h);
+    for (let i = 0; i < person.length; i++) person[i] = 1 - seg.bg[i];
+    const main = keepMainSubject(person, seg.w, seg.h);
+    if (!main.kept) return null;
+    let x0 = seg.w, y0 = seg.h, x1 = -1, y1 = -1;
+    for (let y = 0; y < seg.h; y++) for (let x = 0; x < seg.w; x++) if (main.p[y * seg.w + x] > 0.5) {
+      if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+    }
+    if (x1 < 0) return null;
+    const side = Math.min(Math.max(seg.w, seg.h), Math.max(x1 - x0, y1 - y0) * 1.26 + 8);
+    const sx = Math.min(side, seg.w), sy = Math.min(side, seg.h);
+    const bx = clamp((x0 + x1 - sx) / 2, 0, seg.w - sx), by = clamp((y0 + y1 - sy) / 2, 0, seg.h - sy);
+    if ((sx * sy) / (seg.w * seg.h) > 0.85) return null;
+    return { x: bx / seg.w, y: by / seg.h, w: sx / seg.w, h: sy / seg.h };
+  }
+  function mergeSegments(a, b, box, w, h) {
+    const out = resampleBilinear(a, b.aw, b.ah, w, h), fine = b.field;
+    for (let y = 0; y < h; y++) {
+      const v = ((y + 0.5) / h - box.y) / box.h;
+      if (v < 0 || v >= 1) continue;
+      for (let x = 0; x < w; x++) {
+        const u = ((x + 0.5) / w - box.x) / box.w;
+        if (u < 0 || u >= 1) continue;
+        const fx = u * (b.w - 1), fy = v * (b.h - 1), x0 = Math.floor(fx), y0 = Math.floor(fy), x1 = Math.min(b.w - 1, x0 + 1), y1 = Math.min(b.h - 1, y0 + 1), tx = fx - x0, ty = fy - y0;
+        const val = (fine[y0 * b.w + x0] * (1 - tx) + fine[y0 * b.w + x1] * tx) * (1 - ty) + (fine[y1 * b.w + x0] * (1 - tx) + fine[y1 * b.w + x1] * tx) * ty;
+        const edge = Math.min(u, 1 - u, v, 1 - v), k = box.x + box.w >= 1 && box.x <= 0 && box.y <= 0 && box.y + box.h >= 1 ? 1 : Math.min(1, edge / 0.04);
+        out[y * w + x] += (val - out[y * w + x]) * k;
+      }
+    }
+    return out;
+  }
+  function proMatte(rgba, w, h, seg, seg2, box) {
+    const n = w * h, long = Math.max(w, h), I = new Float32Array(n);
+    for (let i = 0, k = 0; i < n; i++, k += 4) I[i] = (0.2126 * rgba[k] + 0.7152 * rgba[k + 1] + 0.0722 * rgba[k + 2]) / 255;
+    const field = (name) => (seg2 && box ? mergeSegments(seg[name], { aw: seg.w, ah: seg.h, w: seg2.w, h: seg2.h, field: seg2[name] }, box, w, h) : resampleBilinear(seg[name], seg.w, seg.h, w, h));
+    const bgF = field('bg'), person = new Float32Array(n);
+    for (let i = 0; i < n; i++) person[i] = 1 - bgF[i];
+    const main = keepMainSubject(person, w, h);
+    if (!main.kept) return { person: false };
+    const r = Math.max(3, Math.round(long / 128));
+    const q = guidedFilter(I, main.p, w, h, r, 0.0009);
+    const skin = field('skin'), face = field('face');
+    const data = new Uint8Array(n * 4);
+    let top = h, bottom = -1, sumS = 0, nS = 0, sumF = 0, nF = 0, area = 0;
+    const need = Math.max(2, Math.round(w * 0.002));
+    for (let y = 0; y < h; y++) {
+      let row = 0;
+      for (let x = 0; x < w; x++) {
+        const i = y * w + x, k = i * 4;
+        let t = (q[i] - 0.42) / 0.44;
+        t = t < 0 ? 0 : t > 1 ? 1 : t;
+        const m = t * t * (3 - 2 * t), sk = Math.min(1, skin[i]) * m, fa = Math.min(1, face[i]) * m;
+        data[k] = m * 255; data[k + 1] = sk * 255; data[k + 2] = fa * 255; data[k + 3] = 255;
+        if (m > 0.5) { row++; area++; }
+        if (m > 0.8) { sumS += I[i]; nS++; }
+        if (fa > 0.6) { sumF += I[i]; nF++; } else if (!nF && sk > 0.6) { sumF += I[i] * 0.2; nF += 0.2; }
+      }
+      if (row >= need) { if (y < top) top = y; bottom = y; }
+    }
+    if (bottom < 0 || area < n * 0.004) return { person: false };
+    const lin = (v) => (v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4));
+    const subjectY = nS ? sumS / nS : 0.5, faceY = nF ? sumF / nF : subjectY;
+    const subjEv = clamp(Math.log2(lin(0.5) / Math.max(lin(subjectY), 0.002)) * 0.6, -0.25, 0.7);
+    const faceEv = clamp(Math.log2(lin(0.6) / Math.max(lin(faceY), 0.002)) * 0.5, 0, 0.6);
+    const feetSeen = (bottom + 1) / h < 0.985;
+    return { person: true, data, w, h, feet: feetSeen ? (bottom + 1) / h : -1, personH: (bottom + 1 - top) / h, subjEv, faceEv, share: area / n, others: main.removed };
   }
   /* Une la reconstrucción con el detalle real para que no se vea pintada. */
   function fuseImages(ai, base, mix) {
@@ -926,7 +1086,7 @@ const Core = (() => {
   const fmtTime = (s) => { if (!Number.isFinite(s)) return '—'; if (s < 60) return `${Math.max(1, Math.round(s))} s`; const m = Math.floor(s / 60); return m >= 60 ? `${Math.floor(m / 60)} h ${m % 60} min` : `${m} min ${Math.round(s % 60)} s`; };
 
   return {
-    clamp, lerp, clone, defaultParams, colorIsIdentity, effectiveParams, autoAdjust, diagnose, casSharpen, edgeSharpen, fuseImages, qualityPlan, geoIsIdentity, targetDims, frameSize, geoOutputSize, geoMatrix, IDENTITY_XF, applyXf, curveToTable,
+    clamp, lerp, clone, defaultParams, colorIsIdentity, effectiveParams, autoAdjust, diagnose, casSharpen, edgeSharpen, proMatte, segmentBox, fuseImages, qualityPlan, geoIsIdentity, targetDims, frameSize, geoOutputSize, geoMatrix, IDENTITY_XF, applyXf, curveToTable,
     haldToCube, parseCube, lutTetra, parseXmp, lanczosKernel, lanczosRegion, lanczosResize, planTiles, destRegion, blendTile, resolveAccum,
     analyzePixels, classifyScene, rankPresets, computeSkinMask, computeSkyMask, rgbToHsv, readExif, findApp1, prepareExif, insertApp1, crc32, makeZip,
     SOCIAL_MODES, slugify, presetSlug, exportName, fmtBytes, fmtTime, CAT_LABEL, sectionIsDefault,
