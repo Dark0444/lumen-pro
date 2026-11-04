@@ -167,7 +167,13 @@ function camLoop(my) {
   const step = async () => {
     if (my !== CAM.token || !CAM.on) return;
     CAM.raf = requestAnimationFrame(step);
-    camRenderFrame();
+    /* Cada cuadro deja libre al menos la mitad del tiempo para tocar la pantalla y guardar fotos */
+    const t = performance.now();
+    if (t < (CAM.nextAt || 0)) return;
+    if (camRenderFrame()) {
+      const cost = performance.now() - t;
+      CAM.nextAt = t + Math.max(30, cost * (CAM.pending ? 4 : 2.5));
+    }
   };
   CAM.raf = requestAnimationFrame(step);
 }
