@@ -11,6 +11,7 @@ import android.provider.MediaStore;
 import android.provider.OpenableColumns;
 import android.util.Base64;
 import android.util.Log;
+import android.webkit.MimeTypeMap;
 
 import androidx.core.content.FileProvider;
 
@@ -79,7 +80,9 @@ public class LumenNativoPlugin extends Plugin {
             if (!dir.exists() && !dir.mkdirs()) throw new IOException("No se pudo preparar la carpeta temporal.");
             File[] previous = dir.listFiles();
             if (previous != null) for (File f : previous) f.delete();
-            File dest = new File(dir, "foto-" + System.currentTimeMillis());
+            /* Sin extensión, el servidor local de la WebView responde con index.html */
+            String extension = type == null ? null : MimeTypeMap.getSingleton().getExtensionFromMimeType(type);
+            File dest = new File(dir, "foto-" + System.currentTimeMillis() + "." + (extension == null ? "jpg" : extension));
             long total = 0;
             try (InputStream in = resolver.openInputStream(source); OutputStream os = new FileOutputStream(dest)) {
                 if (in == null) throw new IOException("Android no permitió leer la foto.");
