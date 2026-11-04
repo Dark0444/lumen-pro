@@ -311,10 +311,15 @@ function startThumbs() {
   CAM.thumbI = 0;
   const frame = document.createElement('canvas'), x = frame.getContext('2d');
   frame.width = frame.height = 128;
-  let tex = null, at = 0;
+  let tex = null, at = 0, tick = 0, fps = 30, fpsAt = performance.now(), fpsDrawn = CAM.drawn || 0;
   CAM.thumbT = setInterval(async () => {
     const v = CAM.video;
-    if (!CAM.on || document.hidden || !v || v.readyState < 2 || !CAM.visible || !CAM.visible.size || CAM.thumbBusy || CAM.pending || camGpuBusy()) return;
+    if (!CAM.on || document.hidden || !v || v.readyState < 2 || !CAM.visible || !CAM.visible.size || CAM.thumbBusy || CAM.pending) return;
+    /* En equipos lentos las miniaturas van más despacio para no quitarle cuadros a la vista en vivo */
+    tick++;
+    const t = performance.now();
+    if (t - fpsAt > 2000) { fps = ((CAM.drawn || 0) - fpsDrawn) / ((t - fpsAt) / 1000); fpsDrawn = CAM.drawn || 0; fpsAt = t; }
+    if (fps < 12 && tick % 4) return;
     CAM.thumbBusy = true;
     try {
       const now = performance.now();
