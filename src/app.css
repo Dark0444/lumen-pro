@@ -369,6 +369,7 @@ dialog::backdrop{background:rgba(0,0,0,.7)}
 .cam-grid{position:absolute;inset:0;background:
   linear-gradient(90deg,transparent calc(33.33% - .5px),rgba(255,255,255,.45) calc(33.33% - .5px) calc(33.33% + .5px),transparent calc(33.33% + .5px) calc(66.66% - .5px),rgba(255,255,255,.45) calc(66.66% - .5px) calc(66.66% + .5px),transparent calc(66.66% + .5px)),
   linear-gradient(transparent calc(33.33% - .5px),rgba(255,255,255,.45) calc(33.33% - .5px) calc(33.33% + .5px),transparent calc(33.33% + .5px) calc(66.66% - .5px),rgba(255,255,255,.45) calc(66.66% - .5px) calc(66.66% + .5px),transparent calc(66.66% + .5px))}
+#camHud{top:calc(max(8px,env(safe-area-inset-top,0px)) + 56px);z-index:6;text-align:center}
 .cam-focus{position:absolute;width:64px;height:64px;margin:-32px 0 0 -32px;border:2px solid var(--gold);border-radius:50%;pointer-events:none}
 .cam-count{position:absolute;inset:0;display:grid;place-items:center;font-size:7rem;font-weight:800;text-shadow:0 2px 24px rgba(0,0,0,.6);pointer-events:none;font-variant-numeric:tabular-nums}
 .cam-msg{position:absolute;inset:0;display:grid;place-items:center;padding:32px;text-align:center;color:#eee;line-height:1.5}
