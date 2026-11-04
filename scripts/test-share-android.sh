@@ -57,6 +57,12 @@ adb exec-out screencap -p > "$OUT/4-camara-guardando.png"
 sleep 60
 adb exec-out screencap -p > "$OUT/5-camara-final.png"
 {
+  echo "--- Sin respuesta (ANR):"
+  adb shell dumpsys window | tr -d '\r' | grep -i "Application Not Responding" | head -2 || true
+  adb shell dumpsys activity processes | tr -d '\r' | grep -i "notResponding=true\|Not Responding" | head -2 || true
+  echo "--- fin ANR"
+} >> "$OUT/resultado.txt"
+{
   echo "--- Fotos guardadas:"
   adb shell content query --uri content://media/external/images/media --projection _display_name:_size:width:height | tr -d '\r' | grep LUMEN_ || echo NINGUNA
 } >> "$OUT/resultado.txt"

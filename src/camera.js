@@ -87,6 +87,7 @@ function stopCamera() {
   CAM.token++;
   cancelAnimationFrame(CAM.raf);
   clearInterval(CAM.thumbT);
+  if (CAM.fence && CAM.r) { CAM.r.gl.deleteSync(CAM.fence); CAM.fence = null; }
   if (CAM.ro) CAM.ro.disconnect();
   if (CAM.io) CAM.io.disconnect();
   document.removeEventListener('visibilitychange', camVisibility);
@@ -104,7 +105,8 @@ async function startStream() {
   const my = ++CAM.token, msg = $('#camMsg');
   stopStream();
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { camFail('Este dispositivo no permite usar la cámara aquí.'); return; }
-  const video = { width: { ideal: 1920 }, height: { ideal: 1440 } };
+  /* La vista en vivo no necesita más: la foto se toma aparte con toda la resolución */
+  const video = { width: { ideal: 1280 }, height: { ideal: 960 } };
   if (CAM.deviceI >= 0 && CAM.devices[CAM.deviceI] && CAM.facing === 'environment') video.deviceId = { exact: CAM.devices[CAM.deviceI].deviceId };
   else video.facingMode = CAM.facing;
   let stream;
@@ -169,6 +171,14 @@ function camLoop(my) {
 function camRenderFrame() {
   const v = CAM.video, r = CAM.r;
   if (!v || v.readyState < 2 || !v.videoWidth || v.currentTime === CAM.lastT) return false;
+  /* Si la GPU no terminó el cuadro anterior, salta este: nunca se acumula trabajo ni se traba la pantalla */
+  const gl = r.gl;
+  if (CAM.fence) {
+    const st = gl.clientWaitSync(CAM.fence, 0, 0);
+    if (st === gl.TIMEOUT_EXPIRED) return false;
+    gl.deleteSync(CAM.fence);
+    CAM.fence = null;
+  }
   const s = camSize();
   if (!s) return false;
   if (!r.hasLut(CAM.preset) && CAM.preset) { if (!CAM.lutLoading) { CAM.lutLoading = true; lutFor(r, CAM.preset).finally(() => { CAM.lutLoading = false; }); } }
@@ -180,6 +190,9 @@ function camRenderFrame() {
   const lut = CAM.preset && r.hasLut(CAM.preset) ? r.bindLut(CAM.preset) : null;
   const params = camParams(CAM.preset, CAM.stats, CAM.scene, CAM.soft);
   r.render({ src: { tex: CAM.tex, w: v.videoWidth, h: v.videoHeight }, lowSrc: { tex: CAM.tex }, params, lut, intensity: CAM.preset ? 100 : 0, outW: W, outH: H, pxW: W, pxH: H, dither: false, maskXf: Core.IDENTITY_XF });
+  CAM.fence = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
+  gl.flush();
+  CAM.drawn = (CAM.drawn || 0) + 1;
   return true;
 }
 function camStats() {
@@ -292,7 +305,7 @@ function startThumbs() {
   let tex = null, at = 0;
   CAM.thumbT = setInterval(async () => {
     const v = CAM.video;
-    if (!CAM.on || document.hidden || !v || v.readyState < 2 || !CAM.visible || !CAM.visible.size || CAM.thumbBusy) return;
+    if (!CAM.on || document.hidden || !v || v.readyState < 2 || !CAM.visible || !CAM.visible.size || CAM.thumbBusy || CAM.pending || CAM.fence) return;
     CAM.thumbBusy = true;
     try {
       const now = performance.now();
@@ -307,7 +320,7 @@ function startThumbs() {
       R.render({ src: { tex, w: 128, h: 128 }, lowSrc: { tex }, params: camParams(id, CAM.stats, CAM.scene, 0), lut, intensity: id ? 100 : 0, outW: 112, outH: 112, pxW: 112, pxH: 112, dither: false, maskXf: Core.IDENTITY_XF });
       b.querySelector('canvas').getContext('2d').drawImage(R.canvas, 0, 0, 112, 112);
     } catch { /* reintenta en la siguiente vuelta */ } finally { CAM.thumbBusy = false; }
-  }, 140);
+  }, 320);
 }
 function bindCamGestures(view) {
   const pts = new Map();
@@ -458,7 +471,7 @@ async function pumpShots() {
       try {
         await processShot(job);
         CAM.saved++;
-        camNote(`guardada ${CAM.lastName}, ${CAM.lastInfo}, ${Math.round(performance.now() - t0)} ms`);
+        camNote(`guardada ${CAM.lastName}, ${CAM.lastInfo}, ${Math.round(performance.now() - t0)} ms, ${CAM.drawn || 0} cuadros en vivo`);
       } catch (e) {
         camNote(`error al guardar: ${e.message}`);
         toast(`No se pudo guardar una foto. ${e.message}`, 'err');
@@ -477,10 +490,12 @@ async function processShot(job) {
   let bmp;
   if (job.source instanceof Blob) { try { bmp = await createImageBitmap(job.source, opts); } catch { bmp = await createImageBitmap(job.source, { premultiplyAlpha: 'none' }); } } else bmp = await createImageBitmap(job.source);
   job.source = null;
+  await nextFrame();
   const W = bmp.width, H = bmp.height, preview = scaleCanvas(bmp, W, H, 1600);
   const sampleC = scaleCanvas(preview, preview.width, preview.height, 256), sx = sampleC.getContext('2d', { willReadFrequently: true });
   const stats = Core.analyzePixels(sx.getImageData(0, 0, sampleC.width, sampleC.height).data, sampleC.width, sampleC.height), scene = Core.classifyScene(stats);
   const params = camParams(job.preset, stats, scene, job.soft);
+  await nextFrame();
   const lowTex = rnd.uploadImage(preview);
   const geo = Core.defaultParams().geo;
   const portrait = W < H, r = portrait ? CAM_RATIOS[job.ratio] : 1 / CAM_RATIOS[job.ratio], a = W / H;
@@ -503,6 +518,7 @@ async function processShot(job) {
     const lut = job.preset ? await lutFor(rnd, job.preset) : null;
     const geoXf = Core.geoMatrix(geo, W, H), size = Core.geoOutputSize(geo, W, H);
     const full = await renderTiles(rnd, { source: bmp, srcXf: geoXf, size, lowTex, lowXf: geoXf, maskXf: geoXf, params, lut, intensity: job.preset ? 100 : 0, atmos: [0.9, 0.9, 0.9], rotated: false });
+    await nextFrame();
     const t = Core.qualityPlan(size.w, size.h, 'whatsappHd');
     const rgba = full.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, size.w, size.h).data;
     const fit = t.kind === 'resize' && t.w < size.w;
@@ -512,6 +528,7 @@ async function processShot(job) {
     const out = document.createElement('canvas');
     out.width = w; out.height = h;
     out.getContext('2d').putImageData(new ImageData(sharp, w, h), 0, 0);
+    await nextFrame();
     const blob = await encode(out, 'image/jpeg', 0.96);
     const p = job.preset ? S.presets.get(job.preset) : null, d = new Date(job.t), pad = (v) => String(v).padStart(2, '0');
     const name = `LUMEN_${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}_${d.getMilliseconds()}_${p ? Core.presetSlug(p.name) : 'sin-look'}.jpg`;
