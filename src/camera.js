@@ -63,14 +63,15 @@ function screenCamera(host) {
     el('button', { class: 'cam-tool', id: 'camGridBtn', html: I.grid, 'aria-label': 'Cuadrícula', onclick: () => { CAM.grid = !CAM.grid; $('#camGrid').hidden = !CAM.grid; paintCamTools(); } }),
     el('button', { class: 'cam-tool txt', id: 'camPro', 'aria-label': 'Modo Pro al guardar', onclick: () => { CAM.pro = !CAM.pro; paintCamTools(); camHud(CAM.pro ? 'Modo Pro activado' : 'Modo Pro desactivado', CAM.pro ? 'Se aplica al guardar la foto' : ''); } }, 'Pro'));
   const zooms = el('div', { class: 'cam-zooms', id: 'camZooms' });
-  const strip = el('div', { class: 'cam-strip', id: 'camStrip', role: 'group', 'aria-label': 'Presets' });
-  const last = el('button', { class: 'cam-last', id: 'camLast', 'aria-label': 'Abrir la última foto', onclick: openLastShot }, el('canvas', { id: 'camLastC', width: 112, height: 112 }), el('span', { id: 'camPending', hidden: true }));
+  const last = el('button', { class: 'cam-last', id: 'camLast', 'aria-label': 'Ver tus fotos', onclick: openLastShot }, el('canvas', { id: 'camLastC', width: 112, height: 112 }), el('span', { id: 'camPending', hidden: true }));
+  const pick = el('input', { type: 'file', id: 'camPick', accept: 'image/*,.heic,.heif', hidden: true, onchange: (e) => { const f = e.target.files[0]; if (f) { stopCamera(); loadFile(f); } } });
   const shutter = el('button', { class: 'cam-shutter', id: 'camShutter', 'aria-label': 'Tomar foto' }, el('span', {}));
   bindShutter(shutter);
   const flip = el('button', { class: 'cam-tool big', id: 'camFlip', html: I.flip, 'aria-label': 'Cambiar de cámara', onclick: flipCamera });
-  host.append(el('div', { class: 'camera' }, view, top, el('div', { class: 'cam-bottom' }, zooms, strip, el('div', { class: 'cam-row' }, last, shutter, flip))));
+  host.append(el('div', { class: 'camera' }, view, top, el('div', { class: 'cam-bottom' }, zooms, el('div', { class: 'cam-row' }, last, shutter, flip), pick)));
   CAM.pill = null;
-  paintCamStrip();
+  CAM.shown = undefined; CAM.paramsKey = '';
+  selectCamPreset(CAM.preset);
   paintCamTools();
   bindCamGestures(view);
   CAM.ro = new ResizeObserver(layoutCam);
@@ -87,11 +88,9 @@ function stopCamera() {
   CAM.on = false;
   CAM.token++;
   cancelAnimationFrame(CAM.raf);
-  clearInterval(CAM.thumbT);
   if (CAM.fence && CAM.r) { CAM.r.gl.deleteSync(CAM.fence); CAM.fence = null; }
   CAM.view2d = null;
   if (CAM.ro) CAM.ro.disconnect();
-  if (CAM.io) CAM.io.disconnect();
   document.removeEventListener('visibilitychange', camVisibility);
   stopStream();
 }
@@ -138,7 +137,6 @@ async function startStream() {
   paintCamTools();
   layoutCam();
   camLoop(my);
-  startThumbs();
 }
 function camFail(text) { const m = $('#camMsg'); if (m) { m.hidden = false; m.textContent = text; } }
 
@@ -186,7 +184,6 @@ function camRenderFrame() {
   if (camGpuBusy()) return false;
   const s = camSize();
   if (!s) return false;
-  if (!r.hasLut(CAM.preset) && CAM.preset) { if (!CAM.lutLoading) { CAM.lutLoading = true; lutFor(r, CAM.preset).finally(() => { CAM.lutLoading = false; }); } }
   CAM.lastT = v.currentTime;
   const dpr = Math.min(2, devicePixelRatio || 1), k = Math.min(1, Math.min(s.dw * dpr, 720) / v.videoWidth), W = Math.max(2, Math.round(v.videoWidth * k)), H = Math.max(2, Math.round(v.videoHeight * k));
   /* El video pasa primero por un lienzo: subirlo directo a WebGL salía negro en el WebView de Android */
@@ -194,11 +191,14 @@ function camRenderFrame() {
   if (buf.width !== W || buf.height !== H) { buf.width = W; buf.height = H; }
   buf.getContext('2d', { alpha: false }).drawImage(v, 0, 0, W, H);
   CAM.tex = r.uploadFrame(buf, CAM.tex);
+  const id = CAM.shown === undefined ? null : CAM.shown, smart = id && S.presets.get(id).smart;
   const now = performance.now();
-  if (now - CAM.statsAt > 1200) { CAM.statsAt = now; camStats(); }
-  const lut = CAM.preset && r.hasLut(CAM.preset) ? r.bindLut(CAM.preset) : null;
-  const params = camParams(CAM.preset, CAM.stats, CAM.scene, CAM.soft);
-  r.render({ src: { tex: CAM.tex, w: W, h: H }, lowSrc: { tex: CAM.tex }, params, lut, intensity: CAM.preset ? 100 : 0, outW: W, outH: H, pxW: W, pxH: H, dither: false, lowLong: 384, maskXf: Core.IDENTITY_XF });
+  if (smart && now - CAM.statsAt > 1200) { CAM.statsAt = now; camStats(); CAM.paramsKey = ''; }
+  const lut = id && r.hasLut(id) ? r.bindLut(id) : null;
+  const key = `${id}|${CAM.soft}`;
+  if (CAM.paramsKey !== key) { CAM.liveParams = camParams(id, smart ? CAM.stats : null, CAM.scene, CAM.soft); CAM.paramsKey = key; }
+  const params = CAM.liveParams;
+  r.render({ src: { tex: CAM.tex, w: W, h: H }, lowSrc: { tex: CAM.tex }, params, lut, intensity: id ? 100 : 0, outW: W, outH: H, pxW: W, pxH: H, dither: false, lowLong: 384, maskXf: Core.IDENTITY_XF });
   const out = CAM.view2d;
   if (out.width !== W || out.height !== H) { out.width = W; out.height = H; }
   out.getContext('2d', { alpha: false }).drawImage(r.canvas, 0, 0);
@@ -290,65 +290,22 @@ function camHud(main, hint) {
   h.hidden = false;
   CAM.hudT = setTimeout(() => { h.hidden = true; }, 1300);
 }
-function selectCamPreset(id, silent) {
+/* Solo se procesa el preset activo. El anterior sigue en pantalla hasta que el nuevo esté listo, sin parpadeo. */
+function selectCamPreset(id) {
   CAM.preset = id;
-  lutFor(CAM.r, id);
-  /* Deja listos los vecinos para que deslizar se sienta inmediato */
+  camHud(id ? S.presets.get(id).name : 'Sin look');
   const list = [null, ...CAM.order], at = list.indexOf(id);
-  [1, -1].forEach((d) => { const n = list[at + d]; if (n) setTimeout(() => { lutCube(n).catch(() => {}); }, 60); });
-  document.querySelectorAll('.cam-thumb').forEach((b) => { const on = (b.dataset.id || null) === id; b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)); if (on) b.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'auto' }); });
-  if (!silent) camHud(id ? S.presets.get(id).name : 'Sin look');
-  CAM.lastT = -1;
+  lutFor(CAM.r, id).then(() => {
+    if (CAM.preset !== id) return;
+    CAM.shown = id;
+    CAM.lastT = -1;
+    [1, -1].forEach((d) => { const n = list[(at + d + list.length) % list.length]; if (n) lutCube(n).catch(() => {}); });
+  });
 }
 function stepCamPreset(dir) {
   const list = [null, ...CAM.order], i = list.indexOf(CAM.preset);
   selectCamPreset(list[(i + dir + list.length) % list.length]);
   haptic();
-}
-function paintCamStrip() {
-  const strip = $('#camStrip');
-  const make = (id, name) => {
-    const c = el('canvas', { width: 112, height: 112 });
-    const b = el('button', { class: 'cam-thumb' + (id === CAM.preset ? ' on' : ''), 'data-id': id || '', 'aria-pressed': String(id === CAM.preset), onclick: () => selectCamPreset(id) }, c, el('span', {}, name));
-    return b;
-  };
-  strip.append(make(null, 'Sin look'));
-  CAM.order.forEach((id) => strip.append(make(id, S.presets.get(id).name)));
-  CAM.visible = new Set();
-  CAM.io = new IntersectionObserver((ents) => { ents.forEach((e) => { if (e.isIntersecting) CAM.visible.add(e.target); else CAM.visible.delete(e.target); }); }, { root: strip, rootMargin: '40px' });
-  strip.querySelectorAll('.cam-thumb').forEach((b) => CAM.io.observe(b));
-  requestAnimationFrame(() => { const on = strip.querySelector('.cam-thumb.on'); if (on) on.scrollIntoView({ block: 'nearest', inline: 'center' }); });
-}
-/* Miniaturas: se actualizan poco a poco con lo que ve la cámara, sin frenar la vista en vivo */
-function startThumbs() {
-  clearInterval(CAM.thumbT);
-  CAM.thumbI = 0;
-  const frame = document.createElement('canvas'), x = frame.getContext('2d');
-  frame.width = frame.height = 128;
-  let tex = null, at = 0, tick = 0, fps = 30, fpsAt = performance.now(), fpsDrawn = CAM.drawn || 0;
-  CAM.thumbT = setInterval(async () => {
-    const v = CAM.video;
-    if (!CAM.on || document.hidden || !v || v.readyState < 2 || !CAM.visible || !CAM.visible.size || CAM.thumbBusy || CAM.pending) return;
-    /* En equipos lentos las miniaturas van más despacio para no quitarle cuadros a la vista en vivo */
-    tick++;
-    const t = performance.now();
-    if (t - fpsAt > 2000) { fps = ((CAM.drawn || 0) - fpsDrawn) / ((t - fpsAt) / 1000); fpsDrawn = CAM.drawn || 0; fpsAt = t; }
-    if (fps < 12 && tick % 4) return;
-    CAM.thumbBusy = true;
-    try {
-      const now = performance.now();
-      if (now - at > 2500) {
-        const m = Math.min(v.videoWidth, v.videoHeight);
-        x.drawImage(v, (v.videoWidth - m) / 2, (v.videoHeight - m) / 2, m, m, 0, 0, 128, 128);
-        tex = R.uploadImage(frame, tex); at = now;
-      }
-      const list = [...CAM.visible], b = list[CAM.thumbI++ % list.length], id = b.dataset.id || null;
-      const lut = id ? await lutFor(R, id) : null;
-      if (!CAM.on) return;
-      R.render({ src: { tex, w: 128, h: 128 }, lowSrc: { tex }, params: camParams(id, CAM.stats, CAM.scene, 0), lut, intensity: id ? 100 : 0, outW: 112, outH: 112, pxW: 112, pxH: 112, dither: false, maskXf: Core.IDENTITY_XF });
-      b.querySelector('canvas').getContext('2d').drawImage(R.canvas, 0, 0, 112, 112);
-    } catch { /* reintenta en la siguiente vuelta */ } finally { CAM.thumbBusy = false; }
-  }, 320);
 }
 function bindCamGestures(view) {
   const pts = new Map();
@@ -476,9 +433,19 @@ async function captureFrame() {
         opts.imageHeight = Math.round(mh * k);
       }
       if (CAM.flash && CAM.facing === 'environment' && !CAM.caps.torch && pc && pc.fillLightMode && pc.fillLightMode.includes('flash')) opts.fillLightMode = 'flash';
-      const blob = await CAM.ic.takePhoto(opts);
-      if (blob && blob.size) return blob;
+      for (let intento = 0; intento < 3; intento++) {
+        try {
+          const blob = await CAM.ic.takePhoto(opts);
+          if (blob && blob.size) return blob;
+        } catch (e) {
+          camNote(`takePhoto falló: ${e.name} ${e.message}`);
+          /* Segundo intento sin tamaño pedido: la cámara usa su resolución por defecto */
+          if (intento === 0) { delete opts.imageWidth; delete opts.imageHeight; }
+          await wait(180);
+        }
+      }
     } catch (e) { camNote(`takePhoto falló: ${e.name} ${e.message}`); }
+    camHud('Foto de menor calidad', 'La cámara no entregó la foto completa');
   }
   const v = CAM.video, c = document.createElement('canvas');
   c.width = v.videoWidth; c.height = v.videoHeight;
@@ -588,7 +555,7 @@ async function processShot(job) {
   }
 }
 function openLastShot() {
-  if (!CAM.lastBlob) return;
+  if (!CAM.lastBlob) { const i = $('#camPick'); if (i) i.click(); return; }
   const f = new File([CAM.lastBlob], CAM.lastName, { type: 'image/jpeg' });
   stopCamera();
   loadFile(f);

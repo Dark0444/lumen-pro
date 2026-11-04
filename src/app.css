@@ -383,14 +383,7 @@ dialog::backdrop{background:rgba(0,0,0,.7)}
 .cam-zooms{position:absolute;bottom:100%;left:0;right:0;display:flex;justify-content:center;gap:5px;padding-bottom:8px;pointer-events:none}
 .cam-z{pointer-events:auto;min-width:36px;height:30px;padding:0 9px;border:0;border-radius:999px;background:rgba(0,0,0,.55);color:#fff;font-size:.72rem;font-weight:800;cursor:pointer;font-variant-numeric:tabular-nums}
 .cam-z.on{background:#fff;color:#000}
-.cam-strip{display:flex;gap:7px;overflow-x:auto;scrollbar-width:none;padding:9px 10px 5px;scroll-padding-inline:48px}
-.cam-strip::-webkit-scrollbar{display:none}
-.cam-thumb{flex:none;width:58px;border:0;background:none;color:#a9a9b3;padding:0;font-size:.62rem;font-weight:700;cursor:pointer;text-align:center}
-.cam-thumb canvas{display:block;width:58px;height:58px;border-radius:12px;background:#1c1c21}
-.cam-thumb span{display:block;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.cam-thumb.on{color:var(--gold)}
-.cam-thumb.on canvas{box-shadow:0 0 0 2px #000,0 0 0 4px var(--gold)}
-.cam-row{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;padding:7px 22px 13px}
+.cam-row{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;padding:14px 22px 18px}
 .cam-row #camFlip{justify-self:end}
 .cam-last{position:relative;justify-self:start;width:52px;height:52px;padding:0;border:0;border-radius:12px;background:#1c1c21;cursor:pointer}
 .cam-last canvas{width:100%;height:100%;border-radius:12px;display:block;opacity:0}

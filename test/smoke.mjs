@@ -141,8 +141,15 @@ check('Redes: formato definido y preparación automática', social.fmtHidden && 
 const savesBefore = await page.evaluate(() => window.__native.saves);
 await page.evaluate(() => window.__native.openCamera());
 await page.waitForFunction(() => window.__lumen.CAM.stream && window.__lumen.CAM.video.videoWidth > 0, null, { timeout: 60000 });
-check('Cámara: el widget la abre en vivo con todos los presets', await page.evaluate(() => document.querySelectorAll('.cam-thumb').length === 101 && getComputedStyle(document.querySelector('.top')).display === 'none'));
-await page.tap('.cam-thumb[data-id="campeon"]');
+check('Cámara: el widget la abre sin fila de presets', await page.evaluate(() => !document.querySelector('.cam-thumb') && window.__lumen.CAM.order.length === 100 && getComputedStyle(document.querySelector('.top')).display === 'none'));
+await page.evaluate(() => {
+  const view = document.getElementById('camView'), b = view.getBoundingClientRect(), y = b.top + b.height / 2, x = b.left + b.width * 0.7;
+  const fire = (type, cx) => view.dispatchEvent(new PointerEvent(type, { bubbles: true, pointerId: 9, pointerType: 'touch', clientX: cx, clientY: y, isPrimary: true }));
+  view.setPointerCapture = () => {};
+  fire('pointerdown', x); fire('pointermove', x - 30); fire('pointermove', x - 120); fire('pointerup', x - 120);
+});
+await page.waitForFunction(() => window.__lumen.CAM.preset === 'campeon' && window.__lumen.CAM.shown === 'campeon', null, { timeout: 15000 });
+check('Cámara: deslizar cambia el preset activo', true);
 await page.tap('#camShutter');
 await page.waitForTimeout(300);
 await page.tap('#camShutter');

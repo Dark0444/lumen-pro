@@ -48,7 +48,7 @@ adb exec-out screencap -p > "$OUT/3-camara.png"
 SIZE=$(adb shell wm size | tr -d '\r' | sed -E 's/.*: //' | tail -1)
 W=${SIZE%x*}; H=${SIZE#*x}
 D=$(adb shell wm density | tr -d '\r' | sed -E 's/.*: //' | tail -1)
-Y=$(( H - 58 * D / 160 ))
+Y=$(( H - 55 * D / 160 ))
 adb shell input tap $(( W / 2 )) "$Y"
 sleep 6
 adb shell input tap $(( W / 2 )) "$Y"
