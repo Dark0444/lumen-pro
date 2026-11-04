@@ -46,8 +46,9 @@ function screenCamera(host) {
   video.muted = true; video.setAttribute('playsinline', '');
   CAM.video = video;
   if (!CAM.r) CAM.r = new Renderer();
-  const cv = CAM.r.canvas;
-  cv.id = 'camCanvas';
+  /* Se muestra en un lienzo 2D, igual que el editor: es el camino ya probado en Android */
+  const cv = el('canvas', { id: 'camCanvas', role: 'img', 'aria-label': 'Vista en vivo de la cámara' });
+  CAM.view2d = cv;
   const view = el('div', { class: 'cam-view', id: 'camView' }, video, cv,
     el('div', { class: 'cam-frame', id: 'camFrame' }, el('div', { class: 'cam-grid', id: 'camGrid', hidden: !CAM.grid })),
     el('div', { class: 'cam-focus', id: 'camFocus', hidden: true }),
@@ -88,6 +89,7 @@ function stopCamera() {
   cancelAnimationFrame(CAM.raf);
   clearInterval(CAM.thumbT);
   if (CAM.fence && CAM.r) { CAM.r.gl.deleteSync(CAM.fence); CAM.fence = null; }
+  CAM.view2d = null;
   if (CAM.ro) CAM.ro.disconnect();
   if (CAM.io) CAM.io.disconnect();
   document.removeEventListener('visibilitychange', camVisibility);
@@ -152,7 +154,8 @@ function camSize() {
 function layoutCam() {
   const s = camSize();
   if (!s) return;
-  const cv = CAM.r.canvas;
+  const cv = CAM.view2d;
+  if (!cv) return;
   cv.style.cssText = `position:absolute;left:${s.x}px;top:${s.y}px;width:${s.dw}px;height:${s.dh}px;transform:${CAM.facing === 'user' ? 'scaleX(-1)' : 'none'}`;
   const f = $('#camFrame');
   const r = s.a < 1 ? CAM_RATIOS[CAM.ratio] : 1 / CAM_RATIOS[CAM.ratio];
@@ -173,12 +176,7 @@ function camRenderFrame() {
   if (!v || v.readyState < 2 || !v.videoWidth || v.currentTime === CAM.lastT) return false;
   /* Si la GPU no terminó el cuadro anterior, salta este: nunca se acumula trabajo ni se traba la pantalla */
   const gl = r.gl;
-  if (CAM.fence) {
-    const st = gl.clientWaitSync(CAM.fence, 0, 0);
-    if (st === gl.TIMEOUT_EXPIRED) return false;
-    gl.deleteSync(CAM.fence);
-    CAM.fence = null;
-  }
+  if (camGpuBusy()) return false;
   const s = camSize();
   if (!s) return false;
   if (!r.hasLut(CAM.preset) && CAM.preset) { if (!CAM.lutLoading) { CAM.lutLoading = true; lutFor(r, CAM.preset).finally(() => { CAM.lutLoading = false; }); } }
@@ -190,10 +188,21 @@ function camRenderFrame() {
   const lut = CAM.preset && r.hasLut(CAM.preset) ? r.bindLut(CAM.preset) : null;
   const params = camParams(CAM.preset, CAM.stats, CAM.scene, CAM.soft);
   r.render({ src: { tex: CAM.tex, w: v.videoWidth, h: v.videoHeight }, lowSrc: { tex: CAM.tex }, params, lut, intensity: CAM.preset ? 100 : 0, outW: W, outH: H, pxW: W, pxH: H, dither: false, maskXf: Core.IDENTITY_XF });
+  const out = CAM.view2d;
+  if (out.width !== W || out.height !== H) { out.width = W; out.height = H; }
+  out.getContext('2d', { alpha: false }).drawImage(r.canvas, 0, 0);
   CAM.fence = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
   gl.flush();
   CAM.drawn = (CAM.drawn || 0) + 1;
   return true;
+}
+function camGpuBusy() {
+  if (!CAM.fence) return false;
+  const gl = CAM.r.gl;
+  if (gl.clientWaitSync(CAM.fence, 0, 0) === gl.TIMEOUT_EXPIRED) return true;
+  gl.deleteSync(CAM.fence);
+  CAM.fence = null;
+  return false;
 }
 function camStats() {
   const v = CAM.video;
@@ -305,7 +314,7 @@ function startThumbs() {
   let tex = null, at = 0;
   CAM.thumbT = setInterval(async () => {
     const v = CAM.video;
-    if (!CAM.on || document.hidden || !v || v.readyState < 2 || !CAM.visible || !CAM.visible.size || CAM.thumbBusy || CAM.pending || CAM.fence) return;
+    if (!CAM.on || document.hidden || !v || v.readyState < 2 || !CAM.visible || !CAM.visible.size || CAM.thumbBusy || CAM.pending || camGpuBusy()) return;
     CAM.thumbBusy = true;
     try {
       const now = performance.now();
@@ -416,8 +425,9 @@ async function grabShot() {
   paintPending();
   haptic();
   /* La miniatura sale de lo que estás viendo: aparece al instante */
-  if (camRenderFrame() || CAM.r.canvas.width > 4) {
-    const lc = $('#camLastC'), cv = CAM.r.canvas, m = Math.min(cv.width, cv.height);
+  camRenderFrame();
+  if (CAM.view2d && CAM.view2d.width > 4) {
+    const lc = $('#camLastC'), cv = CAM.view2d, m = Math.min(cv.width, cv.height);
     lc.getContext('2d').drawImage(cv, (cv.width - m) / 2, (cv.height - m) / 2, m, m, 0, 0, 112, 112);
     $('#camLast').classList.add('has');
   }
