@@ -132,7 +132,12 @@ function scaleCanvas(img, W, H, long) {
 async function decodeFile(file) {
   const isHeic = /heic|heif/i.test(file.type) || /\.(heic|heif)$/i.test(file.name || '');
   const opts = { premultiplyAlpha: 'none', imageOrientation: 'from-image' };
+  /* Un WebView antiguo rechaza 'from-image', aunque ya orienta la foto por defecto */
   try { return await createImageBitmap(file, opts); } catch (e) {
+    S.decodeError = e && e.message;
+    if (e && e.name === 'TypeError') {
+      try { return await createImageBitmap(file, { premultiplyAlpha: 'none' }); } catch (e2) { S.decodeError = e2 && e2.message; }
+    }
     if (!isHeic) throw new Error('No se pudo leer esa imagen. Usa un archivo JPG, PNG, WebP o HEIC que no esté dañado.');
   }
   if (!window.heic2any) {
@@ -1750,7 +1755,13 @@ const Native = {
       try {
         const r = await fetch(window.Capacitor.convertFileSrc(d.path));
         if (!r.ok) throw new Error('No se pudo leer la foto.');
-        await loadFile(new File([await r.blob()], d.name || 'foto.jpg', { type: d.mime || 'image/jpeg' }));
+        const blob = await r.blob();
+        const note = (text) => { if (P.note) P.note({ text }).catch(() => {}); };
+        note(`Recibida: ${r.status}, ${blob.size} bytes, ${blob.type}, ${navigator.userAgent}`);
+        S.decodeError = null;
+        await loadFile(new File([blob], d.name || 'foto.jpg', { type: d.mime || 'image/jpeg' }));
+        note(S.decodeError ? `Error al decodificar: ${S.decodeError}` : 'Decodificación correcta');
+        note(`Pantalla: ${S.step}, foto: ${S.name}, ${S.W}×${S.H}`);
       } catch (e) { toast(e.message, 'err'); }
     });
   },

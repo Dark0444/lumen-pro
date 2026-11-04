@@ -125,6 +125,12 @@ public class LumenNativoPlugin extends Plugin {
     }
 
     @PluginMethod
+    public void note(PluginCall call) {
+        Log.i(TAG, call.getString("text", ""));
+        call.resolve();
+    }
+
+    @PluginMethod
     public void begin(PluginCall call) {
         try {
             closeOut();
