@@ -38,19 +38,28 @@ public class LumenNativoPlugin extends Plugin {
     private String mime = "image/jpeg";
     private static final long MAX_INCOMING = 200L * 1024 * 1024;
     private static final String TAG = "LumenNativo";
+    public static final String ACTION_CAMERA = "com.lumenpro.app.CAMARA";
 
     /* La app se abrió desde Compartir o Editar de otra app, como la Galería */
     @Override
     public void load() {
         Intent intent = getActivity().getIntent();
-        if (receiveImage(intent)) getActivity().setIntent(new Intent(Intent.ACTION_MAIN));
+        if (receiveCamera(intent) || receiveImage(intent)) getActivity().setIntent(new Intent(Intent.ACTION_MAIN));
     }
 
     /* La app ya estaba abierta */
     @Override
     protected void handleOnNewIntent(Intent intent) {
         super.handleOnNewIntent(intent);
-        receiveImage(intent);
+        if (!receiveCamera(intent)) receiveImage(intent);
+    }
+
+    /* El widget y el acceso directo abren la cámara */
+    private boolean receiveCamera(Intent intent) {
+        if (intent == null || !ACTION_CAMERA.equals(intent.getAction())) return false;
+        if ((intent.getFlags() & Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY) != 0) return false;
+        notifyListeners("openCamera", new JSObject(), true);
+        return true;
     }
 
     private boolean receiveImage(Intent intent) {

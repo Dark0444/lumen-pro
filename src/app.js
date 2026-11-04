@@ -25,6 +25,8 @@ const I = {
   dAdjust: ICON('<path d="M4 7h9M18 7h2M4 17h2M11 17h9"/><circle cx="15.5" cy="7" r="2.3"/><circle cx="8.5" cy="17" r="2.3"/>'),
   dCrop: ICON('<path d="M7 3v14h14"/><path d="M3 7h14v14"/>'),
   back: ICON('<path d="M15 5l-7 7 7 7"/>'),
+  flash: ICON('<path d="M13 3 5 14h6l-1 7 8-11h-6z"/>'),
+  flip: ICON('<path d="M4 12a8 8 0 0 1 13.7-5.6L20 9M20 12a8 8 0 0 1-13.7 5.6L4 15"/><path d="M20 4v5h-5M4 20v-5h5"/>'),
   grid: ICON('<rect x="4" y="4" width="7" height="7" rx="1"/><rect x="13" y="4" width="7" height="7" rx="1"/><rect x="4" y="13" width="7" height="7" rx="1"/><rect x="13" y="13" width="7" height="7" rx="1"/>'),
   undo: ICON('<path d="M8 7 4 11l4 4"/><path d="M4 11h10a5 5 0 0 1 0 10h-2"/>'),
   redo: ICON('<path d="m16 7 4 4-4 4"/><path d="M20 11H10a5 5 0 0 0 0 10h2"/>'),
@@ -315,6 +317,7 @@ function paintSteps() {
   ol.innerHTML = '';
   ol.hidden = !S.bmp;
   document.documentElement.classList.toggle('has-photo', !!S.bmp);
+  document.documentElement.classList.toggle('in-camera', S.step === 'camara');
   if (!S.bmp) return;
   STEPS.forEach(([id, label]) => {
     const b = el('button', { class: 'step' + (S.step === id ? ' on' : ''), onclick: () => go(id), 'aria-current': S.step === id ? 'step' : null }, label);
@@ -327,7 +330,7 @@ function paintSteps() {
 }
 function go(step, opts) {
   S.thumbToken = null;
-  const swap = () => { S.step = step; paintSteps(); renderScreen($('#main')); paintHistoryButtons(); };
+  const swap = () => { if (S.step === 'camara' && step !== 'camara') stopCamera(); S.step = step; paintSteps(); renderScreen($('#main')); paintHistoryButtons(); };
   if (opts && opts.vt && document.startViewTransition && !reduced()) document.startViewTransition(swap);
   else swap();
 }
@@ -335,22 +338,21 @@ function renderScreen(main) {
   main.innerHTML = '';
   const host = el('div', { class: 'screen', style: 'height:100%' });
   main.append(host);
-  ({ subir: screenUpload, galeria: screenGallery, editar: screenEditor, mejorar: screenEnhance, descargar: screenDownload })[S.step](host);
+  ({ subir: screenUpload, galeria: screenGallery, editar: screenEditor, mejorar: screenEnhance, descargar: screenDownload, camara: screenCamera })[S.step](host);
 }
 
 /* ---------- Portada ---------- */
 const WALL_LOOKS = ['golden-hour', 'classic-chrome', 'teal-orange', 'airy', 'moody', 'trix'];
 async function screenUpload(host) {
   const input = el('input', { type: 'file', id: 'fileInput', accept: 'image/*,.heic,.heif', hidden: true, onchange: (e) => loadFile(e.target.files[0]) });
-  const cam = el('input', { type: 'file', id: 'camInput', accept: 'image/*', capture: 'environment', hidden: true, onchange: (e) => loadFile(e.target.files[0]) });
   const drop = el('section', { class: 'drop', 'aria-label': 'Zona para subir la foto' },
     el('h1', { html: 'Sube una foto.<br><em>Te la dejo lista.</em>' }),
-    el('p', {}, 'Detecta si está oscura, opaca o muy saturada, te sugiere cómo arreglarla y te deja deslizar entre más de 80 looks. Exporta hasta 4K, gratis y sin internet.'),
+    el('p', {}, 'Detecta si está oscura, opaca o muy saturada, te sugiere cómo arreglarla y te deja deslizar entre 100 looks. Exporta hasta 4K, gratis y sin internet.'),
     el('div', { class: 'row' },
       el('button', { class: 'btn primary', onclick: () => input.click() }, 'Elegir foto'),
-      el('button', { class: 'btn', onclick: useSample }, 'Probar con una de ejemplo'),
-      el('button', { class: 'btn link', onclick: () => cam.click() }, 'Usar la cámara')),
-    el('p', { class: 'hint' }, Native.on ? 'JPG, PNG, WebP y HEIC.' : 'Arrástrala aquí o pégala con Ctrl+V. JPG, PNG, WebP y HEIC.'), input, cam);
+      el('button', { class: 'btn', id: 'bCamera', onclick: () => go('camara') }, 'Abrir cámara'),
+      el('button', { class: 'btn link', onclick: useSample }, 'Probar con una de ejemplo')),
+    el('p', { class: 'hint' }, Native.on ? 'JPG, PNG, WebP y HEIC.' : 'Arrástrala aquí o pégala con Ctrl+V. JPG, PNG, WebP y HEIC.'), input);
   ['dragenter', 'dragover'].forEach((t) => drop.addEventListener(t, (e) => { e.preventDefault(); drop.classList.add('over'); }));
   ['dragleave', 'drop'].forEach((t) => drop.addEventListener(t, (e) => { e.preventDefault(); drop.classList.remove('over'); }));
   drop.addEventListener('drop', (e) => loadFile(e.dataTransfer.files[0]));
@@ -1462,21 +1464,23 @@ async function renderFinal(params, opt = {}) {
   const geo = params.geo;
   const hasEnh = !!S.enh.src && !opt.noEnh;
   const source = hasEnh ? S.enh.src : S.bmp;
-  const srcW = source.width, srcH = source.height;
   const geoXf = Core.geoMatrix(geo, S.W, S.H);
-  const size = hasEnh ? { w: srcW, h: srcH } : Core.geoOutputSize(geo, S.W, S.H);
-  const srcXf = hasEnh ? Core.IDENTITY_XF : geoXf;
-  const maxTile = opt.maxTile || Math.min(R.maxTex, 2048);
-  const rotated = !hasEnh && (geo.angle !== 0);
+  const size = hasEnh ? { w: source.width, h: source.height } : Core.geoOutputSize(geo, S.W, S.H);
+  return renderTiles(R, { source, srcXf: hasEnh ? Core.IDENTITY_XF : geoXf, size, lowTex: S.previewTex, lowXf: geoXf, maskXf: geoXf, params, lut, intensity: params.presetId ? params.intensity : 0, atmos: S.atmos, rotated: !hasEnh && geo.angle !== 0, opt });
+}
+/* Dibuja la imagen completa por partes. Sirve para el editor y para la cola de la cámara. */
+async function renderTiles(rnd, { source, srcXf, size, lowTex, lowXf, maskXf, params, lut, intensity, atmos, rotated, opt = {} }) {
+  const srcW = source.width, srcH = source.height;
+  const maxTile = opt.maxTile || Math.min(rnd.maxTex, 2048);
   const tileSide = rotated ? Math.floor(maxTile / 1.5) : maxTile;
   const out = document.createElement('canvas');
   out.width = size.w; out.height = size.h;
   const ctx = out.getContext('2d', { willReadFrequently: true });
   const tiles = Core.planTiles(size.w, size.h, tileSide, 0);
   const oneToOne = !rotated && Math.abs(srcW * Math.hypot(srcXf[0], srcXf[3]) - size.w) < 1e-6 && Math.abs(srcH * Math.hypot(srcXf[1], srcXf[4]) - size.h) < 1e-6;
-  const wholeFits = srcW <= R.maxTex && srcH <= R.maxTex && !opt.maxTile;
+  const wholeFits = srcW <= rnd.maxTex && srcH <= rnd.maxTex && !opt.maxTile;
   let wholeTex = null;
-  if (wholeFits) wholeTex = R.uploadImage(source);
+  if (wholeFits) wholeTex = rnd.uploadImage(source);
   try {
     for (const t of tiles) {
       if (opt.signal && opt.signal.cancelled) throw Object.assign(new Error('Cancelado'), { cancelled: true });
@@ -1488,26 +1492,26 @@ async function renderFinal(params, opt = {}) {
         const sx = Math.max(0, Math.floor(Math.min(...xs)) - pad), sy = Math.max(0, Math.floor(Math.min(...ys)) - pad);
         const ex = Math.min(srcW, Math.ceil(Math.max(...xs)) + pad), ey = Math.min(srcH, Math.ceil(Math.max(...ys)) + pad);
         const piece = await createImageBitmap(source, sx, sy, ex - sx, ey - sy, { premultiplyAlpha: 'none', colorSpaceConversion: 'none' });
-        tempTex = R.uploadImage(piece);
+        tempTex = rnd.uploadImage(piece);
         piece.close();
         tex = tempTex;
         sub = [sx / srcW, sy / srcH, (ex - sx) / srcW, (ey - sy) / srcH];
       }
-      const ok = R.render({
-        src: { tex, sub, nearest: oneToOne, w: srcW, h: srcH }, lowSrc: { tex: S.previewTex }, lowXf: geoXf, srcXf, maskXf: geoXf, params, lut, intensity: params.presetId ? params.intensity : 0,
-        outW: size.w, outH: size.h, tile, pxW: t.w, pxH: t.h, tetra: true, atmos: S.atmos,
+      const ok = rnd.render({
+        src: { tex, sub, nearest: oneToOne, w: srcW, h: srcH }, lowSrc: { tex: lowTex }, lowXf, srcXf, maskXf, params, lut, intensity,
+        outW: size.w, outH: size.h, tile, pxW: t.w, pxH: t.h, tetra: true, atmos,
       });
       if (!ok) throw new Error('La tarjeta gráfica se reinició durante la exportación. Inténtalo de nuevo.');
-      const px = R.read();
+      const px = rnd.read();
       ctx.putImageData(new ImageData(px, t.w, t.h), t.x, t.y);
-      if (tempTex) R.gl.deleteTexture(tempTex);
+      if (tempTex) rnd.gl.deleteTexture(tempTex);
       if (opt.onTile) opt.onTile();
       if (tiles.length > 1) await nextFrame();
     }
   } finally {
-    if (wholeTex) R.gl.deleteTexture(wholeTex);
+    if (wholeTex) rnd.gl.deleteTexture(wholeTex);
   }
-  R.canvas.width = 4; R.canvas.height = 4;
+  rnd.canvas.width = 4; rnd.canvas.height = 4;
   return out;
 }
 /* Nitidez de salida: se aplica al final para que el resultado quede limpio y sin halos */
@@ -1958,6 +1962,7 @@ const Native = {
   bindIncoming() {
     const P = window.Capacitor.Plugins.LumenNativo;
     if (!P || !P.addListener) return;
+    P.addListener('openCamera', () => { if (S.step !== 'camara') go('camara'); });
     P.addListener('sharedImage', async (d) => {
       if (d.error) { toast(d.error, 'err'); return; }
       if (S.enhBusy) { toast('Espera a que termine la mejora y vuelve a compartir la foto.', 'err'); return; }
@@ -1984,6 +1989,7 @@ const Native = {
         window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
         return;
       }
+      if (S.step === 'camara') { closeCamera(); return; }
       if (S.step === 'editar') { if (S.mode !== 'looks') setMode('looks'); else go('subir'); } else if (S.step !== 'subir') go('editar');
       else App.exitApp();
     });
@@ -2014,4 +2020,4 @@ function setTheme(t) { document.documentElement.dataset.theme = t; try { localSt
   });
   if (Native.on) Native.bindIncoming();
 })();
-window.__lumen = { rebuildDetail, Native, S, R, Core, ensureLut, renderFinal, paramsFor, go, loadFile, importPreset, aiPool, IDB, chooseEngine };
+window.__lumen = { CAM, rebuildDetail, Native, S, R, Core, ensureLut, renderFinal, paramsFor, go, loadFile, importPreset, aiPool, IDB, chooseEngine };

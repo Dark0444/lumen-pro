@@ -22,7 +22,7 @@ const url = `http://127.0.0.1:${server.address().port}/`;
 const fail = [];
 const check = (name, ok, detail = '') => { console.log(`${ok ? 'OK ' : 'MAL'} ${name}${detail ? ' · ' + detail : ''}`); if (!ok) fail.push(name); };
 
-const browser = await chromium.launch({ args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
+const browser = await chromium.launch({ args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream'] });
 const ctx = await browser.newContext({ viewport: { width: 400, height: 800 }, isMobile: true, hasTouch: true, acceptDownloads: true });
 await ctx.addInitScript(() => {
   const log = (window.__native = { name: null, mime: null, size: 0, head: null, saves: 0, shares: 0, exit: 0, back: null, bar: [] });
@@ -35,7 +35,7 @@ await ctx.addInitScript(() => {
         chunk: async ({ data }) => { const raw = atob(data); if (log.head === null) log.head = raw.charCodeAt(0).toString(16) + raw.charCodeAt(1).toString(16); log.size += raw.length; },
         save: async () => { log.saves++; return { uri: 'content://prueba' }; },
         share: async () => { log.shares++; },
-        addListener: (type, fn) => { if (type === 'sharedImage') log.incoming = fn; },
+        addListener: (type, fn) => { if (type === 'sharedImage') log.incoming = fn; if (type === 'openCamera') log.openCamera = fn; },
         shareTo: async ({ pkg }) => { log.to = pkg; log.toName = log.name; return { opened: true }; },
       },
       App: { addListener: (type, fn) => { if (type === 'backButton') log.back = fn; }, exitApp: () => { log.exit++; } },
@@ -138,6 +138,21 @@ await page.tap('.step:text-is("Guardar")');
 await page.waitForFunction(() => { const d = document.querySelector('#bDownload'); return d && !d.disabled && window.__lumen.S.enh.mode === 'perfil'; }, null, { timeout: 120000 });
 const social = await page.evaluate(() => ({ fmtHidden: !document.querySelector('#fmt').offsetParent, qualHidden: !document.querySelector('#qual').offsetParent, note: !!document.querySelector('#socialNote').offsetParent, name: document.querySelector('#fname').value, dims: document.querySelector('#estDims').textContent }));
 check('Redes: formato definido y preparación automática', social.fmtHidden && social.qualHidden && social.note && social.name.endsWith('.jpg') && social.dims.startsWith('640×'), JSON.stringify(social));
+const savesBefore = await page.evaluate(() => window.__native.saves);
+await page.evaluate(() => window.__native.openCamera());
+await page.waitForFunction(() => window.__lumen.CAM.stream && window.__lumen.CAM.video.videoWidth > 0, null, { timeout: 60000 });
+check('Cámara: el widget la abre en vivo con todos los presets', await page.evaluate(() => document.querySelectorAll('.cam-thumb').length === 101 && getComputedStyle(document.querySelector('.top')).display === 'none'));
+await page.tap('.cam-thumb[data-id="campeon"]');
+await page.tap('#camShutter');
+await page.waitForTimeout(300);
+await page.tap('#camShutter');
+check('Cámara: permite otra foto mientras guarda', await page.evaluate(() => window.__lumen.CAM.pending >= 1));
+await page.waitForFunction((n) => window.__native.saves >= n + 2, savesBefore, { timeout: 180000 });
+const shot = await page.evaluate(() => ({ name: window.__native.name, head: window.__native.head, mime: window.__native.mime, pending: window.__lumen.CAM.pending, info: window.__lumen.CAM.lastInfo }));
+check('Cámara: guarda en segundo plano', /^LUMEN_.*campeon\.jpg$/.test(shot.name) && shot.head === 'ffd8' && shot.pending === 0, JSON.stringify(shot));
+await page.tap('#camClose');
+await page.waitForFunction(() => !window.__lumen.CAM.stream && window.__lumen.S.step !== 'camara');
+check('Cámara: al salir se apaga', true);
 check('Sin errores de JavaScript', errors.length === 0, errors.slice(0, 3).join(' | '));
 await browser.close();
 server.close();

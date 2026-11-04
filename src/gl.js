@@ -236,6 +236,15 @@ class Renderer {
     this.params2D();
     return t;
   }
+  /* Sube un cuadro de video reutilizando la misma textura */
+  uploadFrame(src, tex) {
+    const gl = this.gl, t = tex || gl.createTexture();
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, t);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, src);
+    if (!tex) this.params2D();
+    return t;
+  }
   upload3D(lut) {
     const gl = this.gl, t = gl.createTexture();
     gl.activeTexture(gl.TEXTURE1);

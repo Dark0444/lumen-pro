@@ -48,6 +48,7 @@ html = f'''<!doctype html>
 <script>
 {read('gl.js')}
 {read('ai.js')}
+{read('camera.js')}
 {read('app.js')}
 </script>
 </body>
