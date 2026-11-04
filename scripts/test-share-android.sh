@@ -66,6 +66,8 @@ adb exec-out screencap -p > "$OUT/5-camara-final.png"
   echo "--- Fotos guardadas:"
   adb shell content query --uri content://media/external/images/media --projection _display_name:_size:width:height | tr -d '\r' | grep LUMEN_ || echo NINGUNA
 } >> "$OUT/resultado.txt"
+FOTO=$(adb shell ls "/sdcard/Pictures/LUMEN\\ PRO/" 2>/dev/null | tr -d '\r' | grep LUMEN_ | tail -1)
+[ -n "$FOTO" ] && adb pull "/sdcard/Pictures/LUMEN PRO/$FOTO" "$OUT/6-foto-guardada.jpg" >/dev/null
 adb logcat -d -s LumenNativo:V Capacitor:V AndroidRuntime:E > "$OUT/logcat.txt"
 adb logcat -d | grep -E "no access to|FATAL" >> "$OUT/logcat.txt"
 cat "$OUT/resultado.txt"

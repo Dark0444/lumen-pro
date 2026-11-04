@@ -181,13 +181,17 @@ function camRenderFrame() {
   if (!s) return false;
   if (!r.hasLut(CAM.preset) && CAM.preset) { if (!CAM.lutLoading) { CAM.lutLoading = true; lutFor(r, CAM.preset).finally(() => { CAM.lutLoading = false; }); } }
   CAM.lastT = v.currentTime;
-  CAM.tex = r.uploadFrame(v, CAM.tex);
   const dpr = Math.min(2, devicePixelRatio || 1), k = Math.min(1, (s.dw * dpr) / v.videoWidth), W = Math.max(2, Math.round(v.videoWidth * k)), H = Math.max(2, Math.round(v.videoHeight * k));
+  /* El video pasa primero por un lienzo: subirlo directo a WebGL salía negro en el WebView de Android */
+  const buf = CAM.buf || (CAM.buf = document.createElement('canvas'));
+  if (buf.width !== W || buf.height !== H) { buf.width = W; buf.height = H; }
+  buf.getContext('2d', { alpha: false }).drawImage(v, 0, 0, W, H);
+  CAM.tex = r.uploadFrame(buf, CAM.tex);
   const now = performance.now();
   if (now - CAM.statsAt > 1200) { CAM.statsAt = now; camStats(); }
   const lut = CAM.preset && r.hasLut(CAM.preset) ? r.bindLut(CAM.preset) : null;
   const params = camParams(CAM.preset, CAM.stats, CAM.scene, CAM.soft);
-  r.render({ src: { tex: CAM.tex, w: v.videoWidth, h: v.videoHeight }, lowSrc: { tex: CAM.tex }, params, lut, intensity: CAM.preset ? 100 : 0, outW: W, outH: H, pxW: W, pxH: H, dither: false, maskXf: Core.IDENTITY_XF });
+  r.render({ src: { tex: CAM.tex, w: W, h: H }, lowSrc: { tex: CAM.tex }, params, lut, intensity: CAM.preset ? 100 : 0, outW: W, outH: H, pxW: W, pxH: H, dither: false, maskXf: Core.IDENTITY_XF });
   const out = CAM.view2d;
   if (out.width !== W || out.height !== H) { out.width = W; out.height = H; }
   out.getContext('2d', { alpha: false }).drawImage(r.canvas, 0, 0);
