@@ -1,7 +1,7 @@
 /* LUMEN PRO · interfaz */
 const LUTS = JSON.parse(document.getElementById('lut-data').textContent);
 document.getElementById('lut-data').remove();
-const CATS = ['moviles', 'retratos', 'viajes', 'noche', 'limpios', 'calidos', 'moody', 'cine', 'pelicula', 'vintage', 'bn'];
+const CATS = ['foto', 'moviles', 'retratos', 'viajes', 'noche', 'limpios', 'calidos', 'moody', 'cine', 'pelicula', 'vintage', 'bn'];
 const STEPS = [['editar', 'Editar'], ['galeria', 'Looks'], ['mejorar', 'Calidad'], ['descargar', 'Guardar'], ['subir', 'Nueva foto']];
 const $ = (s, r = document) => r.querySelector(s);
 function el(tag, attrs, ...kids) {
@@ -19,6 +19,13 @@ function el(tag, attrs, ...kids) {
 }
 const ICON = (d) => `<svg viewBox="0 0 24 24" aria-hidden="true">${d}</svg>`;
 const I = {
+  dLooks: ICON('<rect x="4" y="7" width="13" height="13" rx="2"/><path d="M8 3.5h10a2.5 2.5 0 0 1 2.5 2.5v10"/>'),
+  dPro: ICON('<circle cx="12" cy="8" r="3.6"/><path d="M5 20.5c1-4 3.6-6 7-6s6 2 7 6"/><path d="M19.5 3.5v3M18 5h3"/>'),
+  dAuto: ICON('<path d="M12 3.5l1.9 5.1 5.1 1.9-5.1 1.9-1.9 5.1-1.9-5.1L5 10.5l5.1-1.9z"/><path d="M19 17v3.5M17.3 18.8h3.4"/>'),
+  dAdjust: ICON('<path d="M4 7h9M18 7h2M4 17h2M11 17h9"/><circle cx="15.5" cy="7" r="2.3"/><circle cx="8.5" cy="17" r="2.3"/>'),
+  dCrop: ICON('<path d="M7 3v14h14"/><path d="M3 7h14v14"/>'),
+  back: ICON('<path d="M15 5l-7 7 7 7"/>'),
+  grid: ICON('<rect x="4" y="4" width="7" height="7" rx="1"/><rect x="13" y="4" width="7" height="7" rx="1"/><rect x="4" y="13" width="7" height="7" rx="1"/><rect x="13" y="13" width="7" height="7" rx="1"/>'),
   undo: ICON('<path d="M8 7 4 11l4 4"/><path d="M4 11h10a5 5 0 0 1 0 10h-2"/>'),
   redo: ICON('<path d="m16 7 4 4-4 4"/><path d="M20 11H10a5 5 0 0 0 0 10h2"/>'),
   split: ICON('<path d="M12 3v18"/><rect x="3" y="5" width="18" height="14" rx="1"/>'),
@@ -46,7 +53,7 @@ const S = {
   stats: null, scene: null, rank: [], recById: {}, presets: new Map(), customs: [], params: Core.defaultParams(),
   favs: new Set(), compare: new Set(), filter: 'todos', query: '', hist: [], histI: -1, tab: 'auto', zoom: 1, panX: 0, panY: 0, split: null,
   enh: { mode: 'original', engine: 'classic', src: null, w: 0, h: 0, label: 'Sin cambios', left: null }, finalC: null, finalKey: '', atmos: [0.9, 0.9, 0.9],
-  sky: null, skin: null, person: null, maskW: 0, maskH: 0, showMask: 0, aiCancel: null, enhBusy: false, format: 'image/jpeg', quality: 92, keepExif: true, stripGps: true, editedSinceEnh: false,
+  sky: null, skin: null, person: null, maskW: 0, maskH: 0, showMask: 0, aiCancel: null, enhBusy: false, format: 'image/jpeg', quality: 96, keepExif: true, stripGps: true, editedSinceEnh: false,
 };
 LUTS.forEach((p) => S.presets.set(p.id, p));
 try { S.favs = new Set(JSON.parse(localStorage.getItem('lumen.favs') || '[]')); } catch { /* sin almacenamiento */ }
@@ -102,13 +109,17 @@ async function ensureLut(id) {
   }
   return lutLoads.get(id);
 }
+function recipeFor(p) {
+  if (!p || !p.fin) return null;
+  return p.smart && S.stats ? Core.smartRecipe(p.fin, S.stats, S.scene) : p.fin;
+}
 function paramsFor(id) {
   const p = S.presets.get(id);
   const auto = S.params.auto;
   if (p && p.params) { const q = Core.clone(p.params); q.presetId = id; q.intensity = 100; q.xmpOverlay = true; q.auto = auto; q.pro = S.params.pro; return q; }
   const q = Core.defaultParams();
   q.pro = S.params.pro;
-  q.presetId = id; q.intensity = 100; q.auto = auto; q.recipe = p && p.fin ? p.fin : null;
+  q.presetId = id; q.intensity = 100; q.auto = auto; q.recipe = recipeFor(p);
   return q;
 }
 
@@ -311,6 +322,8 @@ function paintSteps() {
     if (S.step === id) requestAnimationFrame(() => b.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'auto' }));
   });
   $('#bUndo').hidden = $('#bRedo').hidden = S.step !== 'editar';
+  $('#bExport').hidden = $('#bBack').hidden = S.step !== 'editar';
+  document.documentElement.classList.toggle('in-editor', S.step === 'editar');
 }
 function go(step, opts) {
   S.thumbToken = null;
@@ -449,7 +462,7 @@ async function selectLook(id, opts = {}) {
   const apply = () => {
     const p = id ? S.presets.get(id) : null;
     S.params.presetId = id;
-    S.params.recipe = p && p.fin ? p.fin : null;
+    S.params.recipe = recipeFor(p);
     S.params.intensity = id && S.intensityById[id] !== undefined ? S.intensityById[id] : 100;
     if (p && p.params) applyCustomParams(id, true);
     commit();
@@ -595,9 +608,9 @@ function chipRow(onChange) {
   const counts = {};
   orderedPresets().forEach((p) => { counts[p.cat] = (counts[p.cat] || 0) + 1; });
   const chip = (id, label) => el('button', { class: 'chip' + (S.filter === id ? ' on' : ''), 'aria-pressed': String(S.filter === id), onclick: () => { S.filter = id; onChange(); } }, label);
-  const chips = [chip('todos', 'Para ti'), chip('premium', 'Premium')];
+  const chips = [chip('todos', 'Para ti'), chip('foto', 'A tu foto'), chip('premium', 'Premium')];
   if (S.customs.length) chips.push(chip('custom', 'Mis presets'));
-  CATS.forEach((c) => chips.push(chip(c, Core.CAT_LABEL[c])));
+  CATS.filter((c) => c !== 'foto').forEach((c) => chips.push(chip(c, Core.CAT_LABEL[c])));
   chips.push(chip('fav', `Favoritos${S.favs.size ? ' ' + S.favs.size : ''}`));
   return chips;
 }
@@ -731,6 +744,81 @@ const SECTIONS = {
   detalle: { title: 'Detalle', key: 'detail', items: [['sharpen', 'Nitidez', 0, 100, 1], ['clarity', 'Claridad', -100, 100, 1], ['texture', 'Textura', -100, 100, 1], ['denoise', 'Reducción de ruido', 0, 100, 1], ['dehaze', 'Eliminar neblina', -100, 100, 1]] },
   efectos: { title: 'Efectos', key: 'fx', items: [['vignette', 'Viñeta', -100, 100, 1], ['grain', 'Grano', 0, 100, 1], ['halation', 'Halación', 0, 100, 1]] },
 };
+/* Todos los ajustes en una sola fila. Brillo usa una escala fácil: 100 son 2 pasos de exposición. */
+const ADJUST_TOOLS = [
+  ['light', 'exposure', 'a-brillo', 'Brillo', -100, 100, 50], ['light', 'contrast', 'a-contraste', 'Contraste', -100, 100], ['light', 'highlights', 'a-luces', 'Luces', -100, 100], ['light', 'shadows', 'a-sombras', 'Sombras', -100, 100],
+  ['light', 'whites', 'a-blancos', 'Blancos', -100, 100], ['light', 'blacks', 'a-negros', 'Negros', -100, 100], ['color', 'vibrance', 'a-vibrancia', 'Vibrancia', -100, 100], ['color', 'saturation', 'a-saturacion', 'Saturación', -100, 100],
+  ['color', 'temp', 'a-calidez', 'Calidez', -100, 100], ['color', 'tint', 'a-tinte', 'Tinte', -100, 100], ['detail', 'sharpen', 'a-nitidez', 'Nitidez', 0, 100], ['detail', 'clarity', 'a-claridad', 'Claridad', -100, 100],
+  ['detail', 'texture', 'a-textura', 'Textura', -100, 100], ['detail', 'denoise', 'a-ruido', 'Sin ruido', 0, 100], ['detail', 'dehaze', 'a-neblina', 'Sin neblina', -100, 100], ['fx', 'vignette', 'a-vineta', 'Viñeta', -100, 100],
+  ['fx', 'grain', 'a-grano', 'Grano', 0, 100], ['fx', 'halation', 'a-brillo-luces', 'Resplandor', 0, 100],
+];
+const fmtDial = (t, v) => `${v > 0 && t.min < 0 ? '+' : ''}${Math.round(v)}${t.unit || ''}`;
+/* Dial y fila de herramientas: siempre visibles. También responde al dedo sobre la foto. */
+function toolDial(panel, mode, tools, extras = []) {
+  S.activeTool = S.activeTool || {};
+  if (!tools.some((t) => t.id === S.activeTool[mode])) S.activeTool[mode] = tools[0].id;
+  const range = el('input', { type: 'range', id: 'dial', class: 'dial-range' });
+  const name = el('strong', { class: 'dial-name' }), value = el('output', { class: 'dial-value', for: 'dial' });
+  const rail = el('div', { class: 'knobs', role: 'group', 'aria-label': 'Herramientas' });
+  const knobs = new Map();
+  const paintKnob = (t) => {
+    const k = knobs.get(t.id); if (!k) return;
+    const v = t.get(), on = v !== t.def, span = Math.max(t.max, -t.min) || 1, share = Math.abs(v - (t.min < 0 ? 0 : 0)) / span;
+    k.ring.style.setProperty('--sweep', `${Math.round(share * 360)}deg`);
+    k.ring.style.setProperty('--from', v < 0 ? `${-Math.round(share * 360)}deg` : '0deg');
+    k.ring.textContent = fmtDial({ ...t, unit: '' }, v);
+    k.btn.classList.toggle('changed', on);
+  };
+  const cur = () => tools.find((t) => t.id === S.activeTool[mode]);
+  const paintFill = (t, v) => {
+    const pos = (x) => ((x - t.min) / (t.max - t.min)) * 100, a = pos(Math.min(v, Math.max(t.min, 0))), b = pos(Math.max(v, Math.max(t.min, 0)));
+    range.style.setProperty('--a', `${a}%`); range.style.setProperty('--b', `${b}%`);
+  };
+  const paintValue = () => { const t = cur(), v = t.get(); value.textContent = fmtDial(t, v); paintFill(t, v); range.value = v; };
+  const apply = (v, live) => {
+    const t = cur();
+    t.set(Core.clamp(Math.round(v), t.min, t.max));
+    paintValue(); paintKnob(t); invalidateEnh(); requestRender(!!live); paintTabMarks();
+    if (!live) { commit(); requestRender(false); if (mode === 'pro') paintStrip(); }
+  };
+  const select = (id) => {
+    S.activeTool[mode] = id;
+    const t = cur();
+    name.textContent = t.label; range.min = t.min; range.max = t.max; range.step = t.step; range.setAttribute('aria-label', t.label);
+    paintValue();
+    knobs.forEach((k, kid) => { const on = kid === id; k.btn.classList.toggle('on', on); k.btn.setAttribute('aria-pressed', String(on)); });
+  };
+  tools.forEach((t) => {
+    const ring = el('span', { class: 'knob-ring' });
+    const btn = el('button', { class: 'knob', 'data-tool': t.id, ondblclick: () => { select(t.id); apply(t.def, false); } }, ring, el('span', { class: 'knob-name' }, t.label));
+    btn.addEventListener('click', () => { select(t.id); showHud(`${t.label} ${fmtDial(t, t.get())}`, 'Desliza sobre la foto'); });
+    knobs.set(t.id, { btn, ring });
+    rail.append(btn);
+    paintKnob(t);
+  });
+  extras.forEach(([label, fn]) => rail.append(el('button', { class: 'knob more', onclick: fn }, el('span', { class: 'knob-ring', html: I.plus }), el('span', { class: 'knob-name' }, label))));
+  range.addEventListener('input', () => apply(Number(range.value), true));
+  range.addEventListener('change', () => apply(Number(range.value), false));
+  panel.append(el('div', { class: 'dial' }, name, range, value), rail);
+  select(S.activeTool[mode]);
+  const act = knobs.get(S.activeTool[mode]);
+  if (act) requestAnimationFrame(() => act.btn.scrollIntoView({ block: 'nearest', inline: 'center' }));
+  S.dial = {
+    mode, get tool() { return cur(); },
+    drag(v) { apply(v, true); const t = cur(); showHud(`${t.label} ${fmtDial(t, t.get())}`); },
+    end() { apply(cur().get(), false); hideHudSoon(); },
+  };
+}
+function showHud(main, hint) {
+  const h = $('#dialHud'); if (!h) return;
+  clearTimeout(S.hudT);
+  h.innerHTML = '';
+  h.append(el('strong', {}, main));
+  if (hint) h.append(el('span', {}, hint));
+  h.hidden = false;
+  if (hint) S.hudT = setTimeout(() => { h.hidden = true; }, 1600);
+}
+function hideHudSoon() { clearTimeout(S.hudT); S.hudT = setTimeout(() => { const h = $('#dialHud'); if (h) h.hidden = true; }, 500); }
 const TABS = [['pro', 'Pro'], ['auto', 'Auto'], ['luz', 'Luz'], ['color', 'Color'], ['curvas', 'Curvas'], ['etalonaje', 'Etalonaje'], ['detalle', 'Detalle'], ['efectos', 'Efectos'], ['geometria', 'Geometría'], ['mascaras', 'Máscaras']];
 const HSL_LABEL = ['Rojo', 'Naranja', 'Amarillo', 'Verde', 'Aguamarina', 'Azul', 'Púrpura', 'Magenta'];
 const HSL_CSS = ['#d9423a', '#e88a2c', '#e7c62d', '#47a84a', '#35b5ad', '#3b6fd6', '#8c52c9', '#d04aa5'];
@@ -770,6 +858,7 @@ function paintPanel() {
   if (!panel) return;
   const top = panel.scrollTop;
   panel.innerHTML = '';
+  S.dial = null;
   const d = Core.defaultParams(), t = S.tab;
   document.querySelectorAll('.tab').forEach((b) => { b.classList.toggle('on', b.dataset.tab === t); b.setAttribute('aria-selected', String(b.dataset.tab === t)); });
   paintTabMarks();
@@ -783,15 +872,15 @@ function paintPanel() {
     } else if (S.proFailed === S.baseId) {
       panel.append(el('div', { class: 'panelbox' }, el('strong', {}, 'No encontré a una persona'), el('p', { class: 'note' }, 'El Modo Pro necesita a alguien en la foto. Prueba con una foto donde se vea mejor.')));
     } else {
-      panel.append(el('div', { class: 'panel-head' }, el('h3', {}, 'Modo Pro'), el('button', { class: 'btn small', onclick: () => { S.params.pro = Core.defaultParams().pro; S.stripCache.clear(); commit(); invalidateEnh(); paintPanel(); paintTabMarks(); paintStrip(); requestRender(false); } }, 'Quitar')));
-      const row = (id, label, key) => panel.append(sliderRow(id, label, 0, 100, 1, Object.assign(() => pro[key], { def: Core.defaultParams().pro[key] }), (v) => { pro[key] = v; S.stripCache.clear(); }, ' %'));
-      row('pro-amount', 'Fuerza', 'amount');
-      row('pro-blur', 'Fondo', 'blur');
-      row('pro-subject', 'Persona', 'subject');
-      row('pro-face', 'Rostro', 'face');
-      row('pro-skin', 'Piel', 'skin');
-      if (S.matteInfo && S.matteInfo.others) panel.append(el('p', { class: 'note' }, 'Dejé enfocada solo a la persona principal.'));
+      const def = Core.defaultParams().pro;
+      const tool = (id, label, key) => ({ id, label, min: 0, max: 100, step: 1, def: def[key], get: () => S.params.pro[key], set: (v) => { S.params.pro[key] = v; S.stripCache.clear(); }, unit: ' %' });
+      toolDial(panel, 'pro', [tool('pro-amount', 'Fuerza', 'amount'), tool('pro-blur', 'Fondo', 'blur'), tool('pro-subject', 'Persona', 'subject'), tool('pro-face', 'Rostro', 'face'), tool('pro-skin', 'Piel', 'skin')],
+        [['Quitar', () => { S.params.pro = Core.defaultParams().pro; S.dial = null; S.stripCache.clear(); commit(); invalidateEnh(); paintPanel(); paintTabMarks(); paintStrip(); requestRender(false); }]]);
     }
+  } else if (t === 'ajustes') {
+    toolDial(panel, 'ajustes', ADJUST_TOOLS.map(([sec, key, id, label, min, max, scale, unit]) => ({ id, label, min, max, step: 1, def: 0, unit: unit || '',
+      get: () => Math.round(S.params[sec][key] * (scale || 1)), set: (v) => { S.params[sec][key] = scale ? v / scale : v; } })),
+    [['Tonos', () => setTab('color')], ['Curvas', () => setTab('curvas')], ['Etalonaje', () => setTab('etalonaje')], ['Máscaras', () => setTab('mascaras')]]);
   } else if (t === 'auto') {
     const info = S.autoInfo, a = S.params.auto;
     panel.append(el('div', { class: 'auto-badge' }, info.label));
@@ -885,12 +974,13 @@ function paintPanel() {
   }
   panel.scrollTop = top;
   compactPanel(panel, t);
+  if (innerWidth <= 900 && ['color', 'curvas', 'etalonaje', 'mascaras'].includes(t)) panel.prepend(el('button', { class: 'panel-back', id: 'bPanelBack', html: `${I.back}<span>Ajustes</span>`, onclick: () => setTab('ajustes') }));
 }
-const COMPACT_TABS = new Set(['pro', 'luz', 'color', 'etalonaje', 'detalle', 'efectos']);
+const COMPACT_TABS = new Set(['luz', 'color', 'etalonaje', 'detalle', 'efectos']);
 /* En el teléfono: un solo deslizador a la vez para que la foto conserve el espacio */
 function compactPanel(panel, t) {
   const st = $('#studio');
-  if (st) st.dataset.sheet = t === 'curvas' ? 'tall' : COMPACT_TABS.has(t) ? 'compact' : 'mid';
+  if (st) st.dataset.sheet = t === 'curvas' ? 'tall' : COMPACT_TABS.has(t) || t === 'ajustes' || t === 'pro' ? 'compact' : 'mid';
   panel.classList.remove('compact');
   if (innerWidth > 900 || !COMPACT_TABS.has(t)) return;
   const ctls = [...panel.querySelectorAll('.ctl')];
@@ -1165,9 +1255,11 @@ function screenEditor(host) {
     el('span', { id: 'tagA', class: 'splittag', style: 'right:12px', hidden: true }, 'Después'),
     el('div', { id: 'lookPill', class: 'look-pill off', 'aria-live': 'polite' }),
     el('div', { id: 'origPill', class: 'look-pill', hidden: true }, el('strong', {}, 'Original')),
+    el('div', { id: 'dialHud', class: 'dial-hud', 'aria-live': 'polite', hidden: true }),
     el('button', { class: 'nav l', 'aria-label': 'Look anterior', onclick: () => stepLook(-1) }, '‹'),
     el('button', { class: 'nav r', 'aria-label': 'Look siguiente', onclick: () => stepLook(1) }, '›'),
     el('div', { class: 'stage-tools' },
+      el('button', { class: 'glass grid-btn', id: 'bGrid', html: I.grid, 'aria-label': 'Ver todos los looks', title: 'Ver todos los looks', onclick: () => go('galeria') }),
       el('button', { class: 'glass', id: 'bSplit', html: I.split, 'aria-label': 'Antes y después', title: 'Antes y después (\\)', onclick: toggleSplit }),
       el('button', { class: 'glass', id: 'bFull', html: I.fit, 'aria-label': 'Pantalla completa', title: 'Pantalla completa (F)', onclick: toggleImmersive })));
   const cropBox = el('div', { class: 'crop', id: 'cropBox', hidden: true }, ...['nw', 'n', 'ne', 'w', 'e', 'sw', 's', 'se'].map((h) => el('i', { 'data-h': h, style: handleStyle(h) })));
@@ -1187,7 +1279,7 @@ function screenEditor(host) {
   const stripWrap = el('div', { class: 'strip-wrap' }, intensity, diag, stripChips, strip);
 
   const dock = el('nav', { class: 'dock', 'aria-label': 'Herramientas' },
-    [['looks', 'Looks'], ['pro', 'Pro'], ['auto', 'Auto'], ['ajustes', 'Ajustes'], ['recortar', 'Recortar']].map(([id, label]) => el('button', { class: 'dock-btn', 'data-mode': id, onclick: () => setMode(id) }, label)));
+    [['looks', 'Looks', I.dLooks], ['pro', 'Pro', I.dPro], ['ajustes', 'Ajustes', I.dAdjust], ['auto', 'Auto', I.dAuto], ['recortar', 'Recortar', I.dCrop]].map(([id, label, icon]) => el('button', { class: 'dock-btn', 'data-mode': id, onclick: () => setMode(id) }, el('span', { class: 'dock-ico', html: icon }), el('span', {}, label))));
 
   const tabs = el('div', { class: 'tabs', role: 'tablist', 'aria-label': 'Secciones de edición' }, TABS.map(([id, label]) => el('button', { class: 'tab', role: 'tab', 'data-tab': id, onclick: () => setTab(id) }, label)));
   const side = el('aside', { class: 'side' },
@@ -1220,8 +1312,8 @@ function setMode(id) {
   if (id === 'auto') setTab('auto');
   else if (id === 'pro') setTab('pro');
   else if (id === 'recortar') setTab('geometria');
-  else if (id === 'ajustes') setTab(S.tab === 'auto' || S.tab === 'pro' || S.tab === 'geometria' ? 'luz' : S.tab);
-  else if (S.tab === 'geometria') setTab('luz');
+  else if (id === 'ajustes') setTab(innerWidth <= 900 ? 'ajustes' : S.tab === 'auto' || S.tab === 'pro' || S.tab === 'geometria' ? 'luz' : S.tab);
+  else if (S.tab === 'geometria' || S.tab === 'ajustes' || S.tab === 'pro') setTab(innerWidth <= 900 ? 'auto' : 'luz');
   paintDock();
   requestRender(false);
 }
@@ -1251,6 +1343,7 @@ function bindStage(stage) {
   const pts = new Map();
   let start = null, splitDrag = false, holdT = null, lastTap = 0;
   const canvas = $('#edCanvas', stage);
+  let dialDrag = null;
   stage.addEventListener('wheel', (e) => {
     e.preventDefault();
     const r = editorRect(); if (!r) return;
@@ -1280,17 +1373,27 @@ function bindStage(stage) {
     if (pts.size === 2 && start && start.d) { const [a, b] = [...pts.values()]; S.zoom = Core.clamp(start.zoom * Math.hypot(a[0] - b[0], a[1] - b[1]) / start.d, 1, 16); requestRender(true); return; }
     if (!start || start.x === undefined) return;
     const dx = e.clientX - start.x, dy = e.clientY - start.y;
+    if (dialDrag) { dialDrag.d.drag(dialDrag.v + (dx / dialDrag.w) * dialDrag.span); return; }
+    if (S.dial && S.zoom === 1 && !S.holdOrig && pts.size === 1 && !S.split && Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy) * 1.3) {
+      const t = S.dial.tool;
+      dialDrag = { d: S.dial, v: t.get(), span: (t.max - t.min) * 0.75, w: stage.getBoundingClientRect().width };
+      start.moved = true; clearTimeout(holdT);
+      start.x = e.clientX;
+      return;
+    }
     if (Math.hypot(dx, dy) > 8) { start.moved = true; clearTimeout(holdT); }
-    if (S.zoom > 1) { S.panX = start.px + dx; S.panY = start.py + dy; requestRender(true); } else if (S.tab !== 'geometria' && !S.holdOrig && start.moved) canvas.style.transform = `translateX(${dx * 0.35}px)`;
+    if (S.dial && S.zoom === 1) return;
+    if (S.zoom > 1) { S.panX = start.px + dx; S.panY = start.py + dy; requestRender(true); } else if (S.tab !== 'geometria' && !S.holdOrig && start.moved && (innerWidth > 900 || S.mode === 'looks')) canvas.style.transform = `translateX(${dx * 0.35}px)`;
   });
   const end = (e) => {
     const s = start, wasHold = S.holdOrig;
     pts.delete(e.pointerId); splitDrag = false; start = null; stage.classList.remove('pan');
     endHold();
     canvas.style.transform = '';
+    if (dialDrag) { const d = dialDrag.d; dialDrag = null; if (S.dial === d) d.end(); requestRender(false); return; }
     if (s && s.x !== undefined && e.type === 'pointerup' && !wasHold) {
       const dx = e.clientX - s.x, dy = e.clientY - s.y;
-      if (S.zoom === 1 && S.tab !== 'geometria' && Math.abs(dx) > 48 && Math.abs(dx) > Math.abs(dy)) { stepLook(dx < 0 ? 1 : -1); return; }
+      if (S.zoom === 1 && S.tab !== 'geometria' && !S.dial && (innerWidth > 900 || S.mode === 'looks') && Math.abs(dx) > 48 && Math.abs(dx) > Math.abs(dy)) { stepLook(dx < 0 ? 1 : -1); return; }
       if (!s.moved) {
         const now = Date.now();
         if (now - lastTap < 300) { S.zoom = S.zoom > 1 ? 1 : 2.5; if (S.zoom === 1) S.panX = S.panY = 0; lastTap = 0; } else lastTap = now;
@@ -1679,7 +1782,7 @@ async function screenDownload(host) {
     el('div', { style: 'background:var(--stage);min-height:0;display:grid;place-items:center;padding:12px;overflow:hidden;min-width:0' }, preview)));
   const social = () => Core.SOCIAL_MODES.has(S.enh.mode);
   const fmtNow = () => (social() ? 'image/jpeg' : S.format);
-  const qNow = () => (social() ? 0.95 : S.quality / 100);
+  const qNow = () => (social() ? 0.96 : S.quality / 100);
   const ext = () => FORMATS.find(([t]) => t === fmtNow())[2];
   const pName = () => { const p = S.presets.get(S.params.presetId); return p ? p.name : null; };
   const zipList = () => [...new Set([...S.favs].filter((id) => S.presets.has(id)))];
@@ -1863,6 +1966,8 @@ function setTheme(t) { document.documentElement.dataset.theme = t; try { localSt
   $('#bTheme').addEventListener('click', () => setTheme(document.documentElement.dataset.theme === 'light' ? 'dark' : 'light'));
   $('#bInfo').addEventListener('click', openCredits);
   $('#brandBtn').addEventListener('click', () => { if (S.step !== 'subir') go('subir'); });
+  $('#bBack').innerHTML = I.back; $('#bBack').addEventListener('click', () => go('subir'));
+  $('#bExport').addEventListener('click', () => go('mejorar'));
   $('#bUndo').innerHTML = I.undo; $('#bRedo').innerHTML = I.redo;
   $('#bUndo').addEventListener('click', () => undo(-1)); $('#bRedo').addEventListener('click', () => undo(1));
   if (Native.on) { Native.bindBack(); const bar = window.Capacitor.Plugins.StatusBar; if (bar) { bar.setBackgroundColor({ color: '#08080A' }).catch(() => {}); bar.setStyle({ style: 'DARK' }).catch(() => {}); } }

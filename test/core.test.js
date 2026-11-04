@@ -255,7 +255,8 @@ test('catálogo: looks originales y nuevos con LUT real', () => {
     assert.ok((l.png && l.png.length > 1000) || luts.some((o) => o.id === l.ref && o.png));
     assert.ok(l.license && l.author && l.fin && typeof l.fin.lut === 'number');
   }
-  assert.equal(luts.length, 84);
+  assert.equal(luts.length, 100);
+  assert.equal(count.foto, 16);
   assert.equal(count.moviles, 9);
   for (const id of ['clean', 'golden-hour', 'teal-orange', 'trix', 'iphone-17-pro-max', 'xiaomi-17-ultra-authentic', 'google-pixel']) assert.ok(luts.some((l) => l.id === id), id);
 });
@@ -305,6 +306,17 @@ test('modo pro: conserva al sujeto, ubica los pies y descarta personas lejanas',
   assert.equal(Core.colorIsIdentity(Core.defaultParams()), true);
   const p = Core.defaultParams(); p.pro.amount = 50;
   assert.equal(Core.colorIsIdentity(p), false);
+});
+test('looks a tu foto: aclaran lo oscuro y nunca oscurecen', () => {
+  const base = { light: { contrast: 10 }, color: { vibrance: 10 }, target: 0.56, scenes: ['retrato'] };
+  const st = { p50: 0.2, p10: 0.05, p1: 0.01, p99: 0.9, clipHi: 0, std: 0.2, chroma: 0.2, cast: 'neutra', cct: 5500 };
+  const dark = Core.smartRecipe(base, st, { id: 'general' });
+  assert.ok(dark.light.exposure > 0.5);
+  assert.ok(dark.light.shadows > 0);
+  assert.equal(dark.target, undefined);
+  assert.equal(Core.smartRecipe(base, { ...st, p50: 0.85, p10: 0.5, p99: 0.99, clipHi: 0.08 }, { id: 'general' }).light.exposure, 0);
+  assert.ok(Core.smartRecipe(base, { ...st, chroma: 0.4 }, { id: 'general' }).color.vibrance < 10);
+  assert.equal(base.target, 0.56);
 });
 test('nombre de archivo automático', () => {
   assert.equal(Core.exportName('Foto Playa.JPG', 'Kodak Portra 400', '4k', 'jpg'), 'foto-playa_portra400_4k.jpg');
@@ -385,7 +397,8 @@ test('recomendaciones: una foto oscura recibe looks que la aclaran', () => {
   const byId = new Map(luts.map((l) => [l.id, l]));
   assert.ok(rank.slice(0, 8).filter((r) => (byId.get(r.id).fits || []).includes('dark')).length >= 2);
   assert.ok(rank.slice(0, 8).filter((r) => r.premium).length <= 3);
-  assert.ok(rank.slice(0, 8).some((r) => /oscura/.test(r.reason)));
+  assert.ok(rank.slice(0, 3).every((r) => r.smart));
+  assert.ok(rank.slice(0, 8).every((r) => (r.dl || 0) >= -5));
 });
 test('calidad: elige reconstruir, combinar o reducir según el tamaño', () => {
   assert.equal(Core.qualityPlan(550, 980, '4k').kind, 'rebuild');

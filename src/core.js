@@ -119,6 +119,32 @@ const Core = (() => {
     return { amount: 100, exposure: r(ev), contrast: r(contrast), highlights: r(highlights), shadows: r(shadows), whites: r(whites), blacks: r(blacks), vibrance, clarity, dehaze, wb: wb.map((v) => Math.round(v * 1000) / 1000), label, notes };
   }
 
+  /* Look que se adapta a cada foto: lee su luz y su color y nunca la oscurece */
+  function smartRecipe(fin, s, scene) {
+    const r = JSON.parse(JSON.stringify(fin));
+    const light = (r.light = r.light || {}), color = (r.color = r.color || {}), detail = (r.detail = r.detail || {});
+    const add = (o, k, v) => { o[k] = Math.round(((o[k] || 0) + v) * 100) / 100; };
+    const night = scene && scene.id === 'noche', portrait = scene && scene.id === 'retrato', land = scene && scene.id === 'paisaje';
+    const target = night ? Math.min(r.target || 0.46, 0.46) : r.target || 0.54;
+    const room = s.clipHi > 0.04 ? 0.35 : 1;
+    const ev = clamp(Math.log2(srgb2lin(target) / Math.max(srgb2lin(s.p50), 0.004)) * 0.72 * room, 0, night ? 1 : 1.5);
+    add(light, 'exposure', Math.round(ev * 100) / 100);
+    if (s.p10 < 0.14) add(light, 'shadows', clamp((0.16 - s.p10) * 170, 0, 30));
+    if (s.p99 > 0.965 || s.clipHi > 0.01) add(light, 'highlights', -clamp(8 + s.clipHi * 320, 0, 34));
+    if (s.std < 0.17) add(light, 'contrast', clamp((0.2 - s.std) * 170, 0, 18));
+    else if (s.std > 0.3) light.contrast = Math.round((light.contrast || 0) * 0.5);
+    if (s.p1 > 0.06) add(light, 'blacks', -clamp((s.p1 - 0.02) * 150, 0, 24));
+    if (s.chroma < 0.16) add(color, 'vibrance', 12);
+    else if (s.chroma > 0.34) color.vibrance = Math.round((color.vibrance || 0) * 0.3);
+    if (s.cast === 'cálida' && s.cct < 4300) add(color, 'temp', -8);
+    else if (s.cast === 'fría' && s.cct > 7500) add(color, 'temp', 8);
+    if (portrait) { detail.clarity = Math.min(detail.clarity || 0, 5); add(color, 'vibrance', -2); }
+    if (land) { add(detail, 'clarity', 4); if (s.p1 > 0.05) add(detail, 'dehaze', 6); }
+    if (night) add(detail, 'denoise', 8);
+    delete r.target; delete r.scenes;
+    return r;
+  }
+
   /* ---------- Diagnóstico y sugerencias ---------- */
   function diagnose(s, scene) {
     const issues = [];
@@ -837,7 +863,7 @@ const Core = (() => {
     arquitectura: { viajes: 22, moody: 22, bn: 22, cine: 22, moviles: 20, limpios: 16, pelicula: 10, calidos: 4, vintage: 4, retratos: 0, noche: 0 },
     general: { moviles: 24, limpios: 20, calidos: 20, viajes: 18, pelicula: 18, retratos: 14, moody: 14, cine: 14, bn: 8, vintage: 6, noche: 0 },
   };
-  const CAT_LABEL = { premium: 'Premium', moviles: 'Móviles', retratos: 'Retrato pro', viajes: 'Paisaje y viaje', noche: 'Noche', limpios: 'Limpios', calidos: 'Cálidos', moody: 'Moody', cine: 'Cine', pelicula: 'Película', vintage: 'Vintage', bn: 'Blanco y negro', custom: 'Mis presets' };
+  const CAT_LABEL = { foto: 'A tu foto', premium: 'Premium', moviles: 'Móviles', retratos: 'Retrato pro', viajes: 'Paisaje y viaje', noche: 'Noche', limpios: 'Limpios', calidos: 'Cálidos', moody: 'Moody', cine: 'Cine', pelicula: 'Película', vintage: 'Vintage', bn: 'Blanco y negro', custom: 'Mis presets' };
   const ISSUE_TEXT = { dark: 'tu foto está oscura y este look la aclara', bright: 'tu foto está muy clara y este look la controla', flat: 'tu foto está opaca y este look le da fuerza', oversat: 'tu foto está muy saturada y este look calma el color', dull: 'el color está apagado y este look lo levanta', backlit: 'hay contraluz y este look equilibra la escena', warm: 'la luz es muy cálida y este look la compensa', cool: 'la luz es muy fría y este look la calienta' };
   function rankPresets(stats, scene, presets) {
     const diag = diagnose(stats, scene);
@@ -848,6 +874,8 @@ const Core = (() => {
       const parts = [];
       const add = (pts, txt) => { parts.push({ pts, txt }); };
       const aff = (SCENE_AFFINITY[scene.id] || SCENE_AFFINITY.general)[p.cat] ?? 0;
+      if (p.smart) add(34 + ((p.fin && p.fin.scenes && p.fin.scenes.includes(scene.id)) ? 22 : 0), 'se adapta a la luz y al color de esta foto');
+      if ((p.dl || 0) < -3) add(Math.max(-45, p.dl * 3.5), 'oscurece la foto');
       add(aff, `encaja con esta foto de ${scene.label.toLowerCase()}`);
       const dC = m.contrast - 1;
       if (stats.std < 0.17 && dC > 0.08) add(Math.min(dC * 70, 18), `la foto tiene poco contraste (σ ${stats.std.toFixed(2)}) y esta LUT lo sube ${fmtPct(dC)}`);
@@ -873,24 +901,29 @@ const Core = (() => {
       
       suggested = Math.max(60, Math.round(suggested / 5) * 5);
       const top = parts.filter((x) => x.pts > 0).sort((a, b) => b.pts - a.pts).slice(0, 2).map((x) => x.txt);
-      return { id: p.id, cat: p.cat, premium: !!p.premium, bw: !!m.bw, score: Math.round(score * 10) / 10, parts, reason: top.join('; ') || 'buen ajuste general', suggested, suggestedWhy: notes.join(', ') };
+      const dl = p.dl || 0;
+      return { id: p.id, cat: p.cat, premium: !!p.premium, smart: !!p.smart, dl, bw: !!m.bw, score: Math.round(score * 10) / 10, parts, reason: top.join('; ') || 'buen ajuste general', suggested, suggestedWhy: notes.join(', ') };
     }).sort((a, b) => b.score - a.score || a.id.localeCompare(b.id));
     /* Variedad: máximo 2 en B/N y 2 de la misma categoría entre los 8 recomendados */
     const picks = [], bwMax = scene.id === 'arquitectura' || scene.id === 'noche' ? 2 : 1;
     const counts = {};
+    list.filter((x) => x.smart).slice(0, 3).forEach((x) => picks.push(x));
     for (const it of list) {
       if (picks.length === 8) break;
       counts[it.cat] = counts[it.cat] || 0;
       if (it.bw && picks.filter((x) => x.bw).length >= bwMax) continue;
       if (counts[it.cat] >= 2) continue;
-      if (it.premium && picks.filter((x) => x.premium).length >= 3) continue;
+      if (it.premium && picks.filter((x) => x.premium).length >= 2) continue;
+      if (picks.includes(it) || it.smart) continue;
+      if (it.dl < -5) continue;
       counts[it.cat]++;
       picks.push(it);
     }
-    for (const it of list) if (picks.length < 8 && !picks.includes(it)) picks.push(it);
+    for (const it of list) if (picks.length < 8 && !picks.includes(it) && it.dl >= -5) picks.push(it);
     const set = new Set(picks.map((p) => p.id));
     const rest = list.filter((x) => !set.has(x.id));
-    const ordered = [...picks.filter((x) => !x.premium), ...picks.filter((x) => x.premium), ...rest.filter((x) => !x.premium), ...rest.filter((x) => x.premium)];
+    const dark = (x) => x.dl < -5;
+    const ordered = [...picks.filter((x) => x.smart), ...picks.filter((x) => !x.smart && !x.premium), ...picks.filter((x) => x.premium), ...rest.filter((x) => x.smart), ...rest.filter((x) => !x.smart && !x.premium && !dark(x)), ...rest.filter((x) => x.premium && !dark(x)), ...rest.filter(dark)];
     return ordered.map((x) => ({ ...x, recommended: set.has(x.id) }));
   }
 
@@ -1086,7 +1119,7 @@ const Core = (() => {
   const fmtTime = (s) => { if (!Number.isFinite(s)) return '—'; if (s < 60) return `${Math.max(1, Math.round(s))} s`; const m = Math.floor(s / 60); return m >= 60 ? `${Math.floor(m / 60)} h ${m % 60} min` : `${m} min ${Math.round(s % 60)} s`; };
 
   return {
-    clamp, lerp, clone, defaultParams, colorIsIdentity, effectiveParams, autoAdjust, diagnose, casSharpen, edgeSharpen, proMatte, segmentBox, fuseImages, qualityPlan, geoIsIdentity, targetDims, frameSize, geoOutputSize, geoMatrix, IDENTITY_XF, applyXf, curveToTable,
+    clamp, lerp, clone, defaultParams, colorIsIdentity, effectiveParams, autoAdjust, smartRecipe, diagnose, casSharpen, edgeSharpen, proMatte, segmentBox, fuseImages, qualityPlan, geoIsIdentity, targetDims, frameSize, geoOutputSize, geoMatrix, IDENTITY_XF, applyXf, curveToTable,
     haldToCube, parseCube, lutTetra, parseXmp, lanczosKernel, lanczosRegion, lanczosResize, planTiles, destRegion, blendTile, resolveAccum,
     analyzePixels, classifyScene, rankPresets, computeSkinMask, computeSkyMask, rgbToHsv, readExif, findApp1, prepareExif, insertApp1, crc32, makeZip,
     SOCIAL_MODES, slugify, presetSlug, exportName, fmtBytes, fmtTime, CAT_LABEL, sectionIsDefault,

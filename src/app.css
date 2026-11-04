@@ -299,5 +299,61 @@ dialog::backdrop{background:rgba(0,0,0,.7)}
   .search{flex:1 1 100%;width:100%}
   #toasts{bottom:calc(150px + env(safe-area-inset-bottom,0px))}
 }
+/* Editor: la foto manda. El dorado solo marca lo que estás cambiando. */
+:root{--gold:#ffc83d;--gold-ink:#1a1300;--tray:#121317}
+:root[data-theme="light"]{--gold:#8f6400;--gold-ink:#fff;--tray:#fff}
+.dial-hud{position:absolute;left:50%;top:18px;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;gap:1px;padding:9px 18px;border-radius:16px;background:rgba(0,0,0,.72);color:#fff;pointer-events:none;white-space:nowrap;z-index:6}
+.dial-hud strong{font-size:1.2rem;font-weight:800;font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+.dial-hud span{font-size:var(--t-xs);color:#d6d6dc}
+.primary-top{display:none}
+.back-top{display:none}
+.grid-btn{display:none}
+.dial{display:grid;grid-template-columns:82px minmax(0,1fr) 46px;align-items:center;gap:8px;padding:8px 14px 4px}
+.dial-name{font-size:var(--t-s);font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dial-value{font-size:var(--t-s);font-weight:800;color:var(--gold);text-align:right;font-variant-numeric:tabular-nums}
+.dial-range{-webkit-appearance:none;appearance:none;width:100%;height:30px;margin:0;background:
+  linear-gradient(var(--gold),var(--gold)) no-repeat left var(--a,50%) center/calc(var(--b,50%) - var(--a,50%)) 3px,
+  repeating-linear-gradient(90deg,var(--line-strong) 0 1px,transparent 1px 10px) center/100% 11px no-repeat;cursor:pointer}
+.dial-range::-webkit-slider-thumb{-webkit-appearance:none;width:5px;height:28px;border-radius:3px;background:var(--gold);box-shadow:0 0 0 2px var(--tray)}
+.dial-range::-moz-range-thumb{width:5px;height:28px;border:0;border-radius:3px;background:var(--gold)}
+.knobs{display:flex;gap:4px;overflow-x:auto;scrollbar-width:none;padding:4px 10px 8px;scroll-padding-inline:40px}
+.knobs::-webkit-scrollbar{display:none}
+.knob{flex:none;width:62px;display:flex;flex-direction:column;align-items:center;gap:4px;border:0;background:none;color:var(--muted);padding:2px 0;cursor:pointer}
+.knob-ring{--sweep:0deg;--from:0deg;width:42px;height:42px;border-radius:50%;display:grid;place-items:center;font-size:.72rem;font-weight:800;font-variant-numeric:tabular-nums;color:var(--faint);
+  background:radial-gradient(closest-side,var(--tray) 84%,transparent 86%),conic-gradient(from var(--from),var(--gold) var(--sweep),var(--line) 0)}
+.knob-name{font-size:.68rem;font-weight:700;white-space:nowrap}
+.knob.changed .knob-ring{color:var(--gold)}
+.knob.on .knob-name{color:var(--text)}
+.knob.on .knob-ring{box-shadow:0 0 0 2px var(--text)}
+.knob.more .knob-ring{background:var(--raised);color:var(--muted)}
+.knob.more svg{width:17px;height:17px}
+.panel-back{display:flex;align-items:center;gap:3px;border:0;background:none;color:var(--text);font-weight:800;font-size:var(--t-s);padding:0 0 6px;cursor:pointer}
+.panel-back svg{width:17px;height:17px}
+.pro-box{margin:10px 12px}
+.dock-ico svg,.panel-back svg,.knob.more svg{fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.dock-ico{display:block;width:23px;height:23px;margin:0 auto 2px}
+.dock-ico svg{width:23px;height:23px}
+@media (max-width:900px){
+  .in-editor .steps,.in-editor #bInfo{display:none}
+  .in-editor .top{padding-block:5px;gap:4px}
+  .in-editor .top-actions{flex:1;margin-left:0;gap:4px}
+  .in-editor .primary-top:not([hidden]){display:block;order:9;margin-left:auto;border:0;border-radius:999px;background:var(--gold);color:var(--gold-ink);font-weight:800;font-size:var(--t-s);padding:8px 18px;cursor:pointer}
+  .in-editor .back-top:not([hidden]){display:grid}
+  .grid-btn{display:grid}
+  .studio{background:var(--tray)}
+  .side{background:var(--tray)}
+  .tabs{display:none!important}
+  #panel{padding:0;min-width:0;width:100%}
+  .studio[data-sheet="compact"] .side{height:auto}
+  .studio[data-sheet="compact"] .panel:not(.compact){overflow:visible;gap:0}
+  .studio[data-sheet="mid"] #panel,.studio[data-sheet="tall"] #panel,.panel.compact{padding:10px 14px}
+  .side{grid-template-rows:minmax(0,1fr);grid-template-columns:minmax(0,1fr);min-width:0}
+  .dial,.knobs{min-width:0;max-width:100%}
+  .dock{background:var(--tray);padding-top:3px;border-top:1px solid var(--line)}
+  .dock-btn{font-size:.68rem;padding:6px 2px 7px;color:var(--faint)}
+  .dock-btn.on{color:var(--gold)}
+  .strip-wrap{background:var(--tray)}
+  .chip.on,.chips .on{background:var(--text);color:var(--bg)}
+}
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.001ms!important;animation-delay:0ms!important;transition-duration:.001ms!important}}
 ::view-transition-old(hero),::view-transition-new(hero){animation-duration:.3s}

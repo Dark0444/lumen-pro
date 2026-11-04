@@ -26,9 +26,11 @@ html = f'''<!doctype html>
 <body>
 <div id="app">
   <header class="top">
+    <button class="icon back-top" id="bBack" aria-label="Nueva foto" title="Nueva foto" hidden></button>
     <button id="brandBtn" class="brand" aria-label="LUMEN PRO, volver a la portada">LUMEN<b> PRO</b></button>
     <nav aria-label="Secciones" style="display:contents"><ol class="steps" id="steps" hidden></ol></nav>
     <div class="top-actions">
+      <button class="primary-top" id="bExport" hidden>Exportar</button>
       <button class="icon" id="bUndo" aria-label="Deshacer" title="Deshacer (Ctrl+Z)" hidden></button>
       <button class="icon" id="bRedo" aria-label="Rehacer" title="Rehacer (Ctrl+Shift+Z)" hidden></button>
       <button class="icon" id="bTheme" aria-label="Cambiar entre tema claro y oscuro" title="Tema"></button>

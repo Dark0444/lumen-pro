@@ -184,6 +184,32 @@ def metrics(c):
                 skinHue=round(float(np.mean(shifts)), 1), skinDelta=round(float(np.abs(so - SKIN).mean()) * 100, 1),
                 black=round(float(y[0]), 3), white=round(float(y[-1]), 3), gray=round(float(y[16]), 3))
 
+# Looks que se adaptan a cada foto: la app calcula luz, contraste y color según lo que ve
+def S(lut, target=.54, scenes=(), **k):
+    return dict(L(lut=lut, **k), target=target, scenes=list(scenes))
+
+LOOKS += [
+    ('foto', 'Portada', C + 'Kodak/Kodak Portra 160 NC 2.png', CC, 'RawTherapee', S(.34, .56, ['retrato', 'general'], light=dict(contrast=8, highlights=-10, shadows=10), color=dict(vibrance=12, temp=3), detail=dict(clarity=5)), ['dark', 'flat', 'dull']),
+    ('foto', 'Campeón', C + 'Fuji/Fuji Provia 100F.png', CC, 'RawTherapee', S(.36, .55, ['retrato', 'general', 'arquitectura'], light=dict(exposure=0.14, contrast=16, highlights=-12, shadows=8), color=dict(vibrance=16), detail=dict(clarity=10)), ['dark', 'flat', 'dull']),
+    ('foto', 'Verano Vivo', C + 'Fuji/Fuji Velvia 100 Generic.png', CC, 'RawTherapee', S(.3, .56, ['paisaje', 'general'], light=dict(exposure=0.06, contrast=10, highlights=-10, shadows=8), color=dict(vibrance=20, temp=4), detail=dict(clarity=6)), ['dark', 'flat', 'dull']),
+    ('foto', 'Playa Clara', G + 'Bright-Summer-Heat.png', CC, 'PictureFX', S(.28, .6, ['paisaje', 'retrato'], light=dict(contrast=6, highlights=-14, shadows=12), color=dict(vibrance=16, temp=2)), ['dark', 'flat', 'dull']),
+    ('foto', 'Cielo Limpio', C + 'Fuji/Fuji Provia 400X.png', CC, 'RawTherapee', S(.32, .55, ['paisaje', 'arquitectura'], light=dict(exposure=0.26, contrast=10, highlights=-16, shadows=8), color=dict(vibrance=18, temp=-3), detail=dict(clarity=8, dehaze=6)), ['dark', 'flat', 'dull']),
+    ('foto', 'Hora Mágica', G + 'Perfect-Sunset-01min.png', CC, 'PictureFX', S(.3, .56, ['retrato', 'paisaje'], light=dict(exposure=0.2, contrast=6, highlights=-10, shadows=10), color=dict(vibrance=10, temp=8)), ['dark', 'flat', 'dull']),
+    ('foto', 'Piel Luminosa', C + 'Kodak/Kodak Portra 400 NC 2.png', CC, 'RawTherapee', S(.36, .58, ['retrato'], light=dict(contrast=4, highlights=-10, shadows=12), color=dict(vibrance=8, temp=4), detail=dict(texture=-8)), ['dark', 'flat', 'dull']),
+    ('foto', 'Editorial Claro', C + 'Kodak/Kodak Portra 160 VC 2.png', CC, 'RawTherapee', S(.3, .6, ['retrato', 'general', 'comida'], light=dict(contrast=10, highlights=-12, shadows=8), color=dict(vibrance=14)), ['dark', 'flat', 'dull']),
+    ('foto', 'Moda', C + 'Kodak/Kodak E-100 GX Ektachrome 100.png', CC, 'RawTherapee', S(.34, .56, ['retrato', 'arquitectura'], light=dict(exposure=0.14, contrast=14, highlights=-10), color=dict(vibrance=12), detail=dict(clarity=6)), ['dark', 'flat', 'dull']),
+    ('foto', 'Estudio Blanco', C + 'Fuji/Fuji 160C 2.png', CC, 'RawTherapee', S(.28, .62, ['retrato', 'comida'], light=dict(contrast=6, highlights=-8, shadows=14, whites=8), color=dict(vibrance=10), detail=dict(texture=-6)), ['dark', 'flat', 'dull']),
+    ('foto', 'Ciudad Viva', C + 'Kodak/Kodak Ektar 100.png', CC, 'RawTherapee', S(.3, .55, ['arquitectura', 'general'], light=dict(exposure=0.2, contrast=14, highlights=-12, shadows=10), color=dict(vibrance=16), detail=dict(clarity=10)), ['dark', 'flat', 'dull']),
+    ('foto', 'Aire Libre', C + 'Fuji/Fuji Superia 400 2.png', CC, 'RawTherapee', S(.28, .56, ['paisaje', 'general'], light=dict(contrast=8, highlights=-12, shadows=10), color=dict(vibrance=18), detail=dict(clarity=6)), ['dark', 'flat', 'dull']),
+    ('foto', 'Fresco', G + 'Bright-Spring-Breeze.png', CC, 'PictureFX', S(.28, .6, ['general', 'comida', 'paisaje'], light=dict(contrast=6, highlights=-10, shadows=10), color=dict(vibrance=14, temp=-2)), ['dark', 'flat', 'dull']),
+    ('foto', 'Deportivo', C + 'Kodak/Kodak Elite Chrome 400.png', CC, 'RawTherapee', S(.34, .55, ['general', 'retrato', 'arquitectura'], light=dict(exposure=0.18, contrast=20, highlights=-12, shadows=6), color=dict(vibrance=18), detail=dict(clarity=14)), ['dark', 'flat', 'dull']),
+    ('foto', 'Luz de Ventana', C + 'Fuji/Fuji 400H 2.png', CC, 'RawTherapee', S(.3, .6, ['retrato', 'comida'], light=dict(contrast=4, highlights=-12, shadows=14), color=dict(vibrance=10, temp=2), detail=dict(texture=-6)), ['dark', 'flat', 'dull']),
+    ('foto', 'Noche Viva', C + 'Fuji/Fuji Superia 1600 2.png', CC, 'RawTherapee', S(.28, .46, ['noche'], light=dict(exposure=0.1, contrast=8, highlights=-14, shadows=24), color=dict(vibrance=16), detail=dict(denoise=14)), ['dark', 'flat', 'dull']),
+]
+
+LIGHT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'look-light.json')
+LIGHT = json.load(open(LIGHT_PATH)) if os.path.isfile(LIGHT_PATH) else {}
+
 
 def main():
     out, missing = [], []
@@ -198,7 +224,7 @@ def main():
             print('FALTA', rel, file=sys.stderr)
             continue
         c, src_level = load_cube(path)
-        item = dict(id=slug(name), name=name, cat=cat, premium=len(row) > 6, file=rel, srcLevel=src_level, level=LEVEL, license=lic, author=author, fin=fin, fits=fits, m=metrics(c))
+        item = dict(id=slug(name), name=name, cat=cat, premium=len(row) > 6 and cat != 'foto', smart=cat == 'foto', dl=LIGHT.get(slug(name), 0), file=rel, srcLevel=src_level, level=LEVEL, license=lic, author=author, fin=fin, fits=fits, m=metrics(c))
         if rel in seen:
             item['ref'] = seen[rel]
         else:
