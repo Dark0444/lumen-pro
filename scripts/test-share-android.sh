@@ -26,11 +26,15 @@ URI="content://media/external/images/media/$ID"
   adb shell cmd package query-activities --components -a android.intent.action.EDIT -t image/png | tr -d '\r' | grep -i lumenpro || echo NO
 } > "$OUT/resultado.txt"
 adb logcat -c
-adb shell am start -W -a android.intent.action.SEND -t image/png --eu android.intent.extra.STREAM "$URI" --grant-read-uri-permission -n com.lumenpro.app/.MainActivity >> "$OUT/resultado.txt" 2>&1
-sleep 60
-adb exec-out screencap -p > "$OUT/1-compartir.png"
+# am no concede permiso sobre EXTRA_STREAM: se pasa también como dato para que el permiso exista
+adb shell am start -W -a android.intent.action.SEND -t image/png -d "$URI" --eu android.intent.extra.STREAM "$URI" --grant-read-uri-permission -n com.lumenpro.app/.MainActivity >> "$OUT/resultado.txt" 2>&1
+for i in 1 2 3 4; do sleep 4; adb exec-out screencap -p > "$OUT/1-compartir-$i.png"; done
+sleep 45
+adb exec-out screencap -p > "$OUT/1-compartir-final.png"
 adb shell am start -W -a android.intent.action.EDIT -t image/png -d "$URI" --grant-read-uri-permission -n com.lumenpro.app/.MainActivity >> "$OUT/resultado.txt" 2>&1
-sleep 40
-adb exec-out screencap -p > "$OUT/2-editar.png"
-adb logcat -d | grep -E "LumenNativo|Capacitor|AndroidRuntime|SecurityException|chromium" | tail -120 > "$OUT/logcat.txt"
+for i in 1 2 3; do sleep 4; adb exec-out screencap -p > "$OUT/2-editar-$i.png"; done
+sleep 30
+adb exec-out screencap -p > "$OUT/2-editar-final.png"
+adb logcat -d -s LumenNativo:V Capacitor:V AndroidRuntime:E > "$OUT/logcat.txt"
+adb logcat -d | grep -E "no access to|FATAL" >> "$OUT/logcat.txt"
 cat "$OUT/resultado.txt"

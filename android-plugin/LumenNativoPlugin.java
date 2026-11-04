@@ -10,6 +10,7 @@ import android.os.Environment;
 import android.provider.MediaStore;
 import android.provider.OpenableColumns;
 import android.util.Base64;
+import android.util.Log;
 
 import androidx.core.content.FileProvider;
 
@@ -34,6 +35,7 @@ public class LumenNativoPlugin extends Plugin {
     private String name = "foto.jpg";
     private String mime = "image/jpeg";
     private static final long MAX_INCOMING = 200L * 1024 * 1024;
+    private static final String TAG = "LumenNativo";
 
     /* La app se abrió desde Compartir o Editar de otra app, como la Galería */
     @Override
@@ -55,6 +57,7 @@ public class LumenNativoPlugin extends Plugin {
         final String action = intent.getAction();
         if (!Intent.ACTION_SEND.equals(action) && !Intent.ACTION_EDIT.equals(action)) return false;
         Uri uri = Intent.ACTION_SEND.equals(action) ? intent.getParcelableExtra(Intent.EXTRA_STREAM) : intent.getData();
+        Log.i(TAG, "Foto recibida por " + action);
         ClipData clip = intent.getClipData();
         if (uri == null && clip != null && clip.getItemCount() > 0) uri = clip.getItemAt(0).getUri();
         /* Solo se aceptan fotos de otras apps, nunca rutas directas a archivos internos */
@@ -96,7 +99,9 @@ public class LumenNativoPlugin extends Plugin {
             data.put("name", incomingName(resolver, source));
             data.put("mime", type == null ? "image/jpeg" : type);
             notifyListeners("sharedImage", data, true);
+            Log.i(TAG, "Foto copiada: " + total + " bytes");
         } catch (IOException | RuntimeException e) {
+            Log.e(TAG, "No se pudo leer la foto", e);
             notifyIncomingError("No se pudo abrir esa foto. " + e.getMessage());
         }
     }
