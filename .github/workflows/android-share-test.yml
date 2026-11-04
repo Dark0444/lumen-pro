@@ -1,0 +1,41 @@
+name: Prueba de Compartir en Android
+
+on:
+  workflow_run:
+    workflows: ["APK de LUMEN PRO"]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  compartir:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Bajar el APK publicado
+        run: gh release download apk-latest -p LumenPro.apk
+      - name: Activar KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Probar en el emulador
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 33
+          target: google_apis
+          arch: x86_64
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
+          script: bash scripts/test-share-android.sh
+      - name: Publicar el resultado
+        if: always()
+        run: |
+          gh release view ci-compartir >/dev/null 2>&1 || gh release create ci-compartir --title "Prueba de Compartir" --notes "Capturas de la prueba automática, con una imagen sintética." --prerelease --latest=false
+          gh release upload ci-compartir resultado-compartir/* --clobber

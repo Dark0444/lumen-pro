@@ -2,10 +2,13 @@ package com.lumenpro.app;
 
 import android.content.ContentResolver;
 import android.content.ContentValues;
+import android.content.ClipData;
 import android.content.Intent;
+import android.database.Cursor;
 import android.net.Uri;
 import android.os.Environment;
 import android.provider.MediaStore;
+import android.provider.OpenableColumns;
 import android.util.Base64;
 
 import androidx.core.content.FileProvider;
@@ -30,6 +33,88 @@ public class LumenNativoPlugin extends Plugin {
     private FileOutputStream out;
     private String name = "foto.jpg";
     private String mime = "image/jpeg";
+    private static final long MAX_INCOMING = 200L * 1024 * 1024;
+
+    /* La app se abrió desde Compartir o Editar de otra app, como la Galería */
+    @Override
+    public void load() {
+        Intent intent = getActivity().getIntent();
+        if (receiveImage(intent)) getActivity().setIntent(new Intent(Intent.ACTION_MAIN));
+    }
+
+    /* La app ya estaba abierta */
+    @Override
+    protected void handleOnNewIntent(Intent intent) {
+        super.handleOnNewIntent(intent);
+        receiveImage(intent);
+    }
+
+    private boolean receiveImage(Intent intent) {
+        if (intent == null || intent.getAction() == null) return false;
+        if ((intent.getFlags() & Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY) != 0) return false;
+        final String action = intent.getAction();
+        if (!Intent.ACTION_SEND.equals(action) && !Intent.ACTION_EDIT.equals(action)) return false;
+        Uri uri = Intent.ACTION_SEND.equals(action) ? intent.getParcelableExtra(Intent.EXTRA_STREAM) : intent.getData();
+        ClipData clip = intent.getClipData();
+        if (uri == null && clip != null && clip.getItemCount() > 0) uri = clip.getItemAt(0).getUri();
+        /* Solo se aceptan fotos de otras apps, nunca rutas directas a archivos internos */
+        if (uri == null || !ContentResolver.SCHEME_CONTENT.equals(uri.getScheme())) {
+            notifyIncomingError("No se pudo abrir esa foto.");
+            return true;
+        }
+        final Uri source = uri;
+        new Thread(() -> copyIncoming(source)).start();
+        return true;
+    }
+
+    private void copyIncoming(Uri source) {
+        ContentResolver resolver = getContext().getContentResolver();
+        File dir = new File(getContext().getCacheDir(), "incoming");
+        try {
+            String type = resolver.getType(source);
+            if (type != null && !type.startsWith("image/")) throw new IOException("Ese archivo no es una foto.");
+            if (!dir.exists() && !dir.mkdirs()) throw new IOException("No se pudo preparar la carpeta temporal.");
+            File[] previous = dir.listFiles();
+            if (previous != null) for (File f : previous) f.delete();
+            File dest = new File(dir, "foto-" + System.currentTimeMillis());
+            long total = 0;
+            try (InputStream in = resolver.openInputStream(source); OutputStream os = new FileOutputStream(dest)) {
+                if (in == null) throw new IOException("Android no permitió leer la foto.");
+                byte[] buffer = new byte[256 * 1024];
+                int n;
+                while ((n = in.read(buffer)) > 0) {
+                    total += n;
+                    if (total > MAX_INCOMING) throw new IOException("La foto pesa demasiado.");
+                    os.write(buffer, 0, n);
+                }
+            } catch (IOException | RuntimeException e) {
+                dest.delete();
+                throw e;
+            }
+            JSObject data = new JSObject();
+            data.put("path", Uri.fromFile(dest).toString());
+            data.put("name", incomingName(resolver, source));
+            data.put("mime", type == null ? "image/jpeg" : type);
+            notifyListeners("sharedImage", data, true);
+        } catch (IOException | RuntimeException e) {
+            notifyIncomingError("No se pudo abrir esa foto. " + e.getMessage());
+        }
+    }
+
+    private String incomingName(ContentResolver resolver, Uri source) {
+        try (Cursor c = resolver.query(source, new String[] { OpenableColumns.DISPLAY_NAME }, null, null, null)) {
+            if (c != null && c.moveToFirst() && !c.isNull(0)) return sanitize(c.getString(0));
+        } catch (RuntimeException e) {
+            /* Algunas apps no informan el nombre */
+        }
+        return "foto.jpg";
+    }
+
+    private void notifyIncomingError(String message) {
+        JSObject data = new JSObject();
+        data.put("error", message);
+        notifyListeners("sharedImage", data, true);
+    }
 
     @PluginMethod
     public void begin(PluginCall call) {

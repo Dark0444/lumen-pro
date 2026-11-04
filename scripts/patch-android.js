@@ -18,8 +18,23 @@ let manifest = leer(manifestPath);
 if (!manifest.includes('android.permission.VIBRATE')) manifest = manifest.replace('</manifest>', '    <uses-permission android:name="android.permission.VIBRATE" />\n</manifest>');
 if (!manifest.includes('android:largeHeap')) manifest = manifest.replace('<application', '<application\n        android:largeHeap="true"\n        android:hardwareAccelerated="true"');
 if (!manifest.includes('android:windowSoftInputMode')) manifest = manifest.replace('<activity', '<activity\n            android:windowSoftInputMode="adjustResize"');
+/* Aparecer en Compartir y Editar de la Galería */
+if (!manifest.includes('android.intent.action.SEND')) {
+  if (!manifest.includes('</activity>')) fallar('Manifiesto', 'No se encontró la actividad principal.');
+  manifest = manifest.replace('</activity>', `    <intent-filter android:label="Editar en LUMEN PRO">
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="image/*" />
+            </intent-filter>
+            <intent-filter android:label="Editar en LUMEN PRO">
+                <action android:name="android.intent.action.EDIT" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="image/*" />
+            </intent-filter>
+        </activity>`);
+}
 escribir(manifestPath, manifest);
-hechos.push('manifiesto');
+hechos.push('manifiesto y compartir desde la Galería');
 
 /* Android 10 o superior: el guardado usa MediaStore sin pedir permisos de almacenamiento */
 const varsPath = path.join(android, 'variables.gradle');

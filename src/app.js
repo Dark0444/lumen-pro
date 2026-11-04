@@ -1583,6 +1583,9 @@ async function screenDownload(host) {
   const exifBox = el('div', { style: 'display:flex;flex-direction:column;gap:8px' },
     el('label', { class: 'check' }, keep, 'Conservar los datos EXIF de la cámara'), el('label', { class: 'check' }, strip, 'Eliminar la ubicación GPS'),
     el('p', { class: 'note' }, S.exif.app1 ? (S.exif.gps ? 'Esta foto incluye ubicación GPS.' : 'Esta foto no incluye ubicación GPS.') : 'Esta foto no trae datos EXIF.'));
+  const fmtRow = el('div', { class: 'field' }, el('label', { for: 'fmt' }, 'Formato'), fmt);
+  const socialNote = el('p', { class: 'note', id: 'socialNote', hidden: true }, 'Formato definido: JPG de alta calidad. Se ve igual de nítida que un PNG después de subirla y pesa mucho menos.');
+  const prepBox = el('div', { style: 'display:contents' });
   const sizeEl = el('div', { class: 'big', id: 'estSize', 'aria-live': 'polite' }, '…');
   const nameI = el('input', { type: 'text', id: 'fname', 'aria-label': 'Nombre del archivo' });
   const dims = el('p', { class: 'note', id: 'estDims' });
@@ -1592,13 +1595,16 @@ async function screenDownload(host) {
   const zipInfo = el('p', { class: 'note', id: 'zipInfo' });
   const preview = el('canvas', { id: 'dlPreview', role: 'img', 'aria-label': 'Resultado final', style: 'width:100%;height:100%;object-fit:contain' });
   host.append(el('div', { class: 'enh' },
-    el('div', { class: 'enh-side' }, el('h2', {}, 'Descarga tu foto'),
+    el('div', { class: 'enh-side' }, el('h2', {}, 'Descarga tu foto'), prepBox,
       el('div', {}, el('div', { class: 'hint' }, 'Peso real del archivo'), sizeEl, dims),
-      el('div', { class: 'field' }, el('label', { for: 'fmt' }, 'Formato'), fmt), qRow,
+      fmtRow, socialNote, qRow,
       el('div', { class: 'field' }, el('label', { for: 'fname' }, 'Nombre'), nameI), exifBox,
       el('div', { class: 'row' }, dl, share), el('div', { class: 'sub' }, 'Varios looks'), zipInfo, zipBtn, el('div', { id: 'zipBar' })),
     el('div', { style: 'background:var(--stage);min-height:0;display:grid;place-items:center;padding:12px;overflow:hidden;min-width:0' }, preview)));
-  const ext = () => FORMATS.find(([t]) => t === S.format)[2];
+  const social = () => Core.SOCIAL_MODES.has(S.enh.mode);
+  const fmtNow = () => (social() ? 'image/jpeg' : S.format);
+  const qNow = () => (social() ? 0.95 : S.quality / 100);
+  const ext = () => FORMATS.find(([t]) => t === fmtNow())[2];
   const pName = () => { const p = S.presets.get(S.params.presetId); return p ? p.name : null; };
   const zipList = () => [...new Set([...S.favs].filter((id) => S.presets.has(id)))];
   zipInfo.textContent = zipList().length ? `Exporta ${zipList().length} favorito${zipList().length > 1 ? 's' : ''} con tus ajustes y esta calidad, en JPEG.` : 'Marca looks con la estrella para exportarlos juntos.';
@@ -1612,11 +1618,13 @@ async function screenDownload(host) {
     try {
       const c = await ensureFinal();
       if (my !== token) return;
-      qRow.hidden = S.format === 'image/png';
-      exifBox.hidden = S.format !== 'image/jpeg';
-      let b = await encode(c, S.format, S.quality / 100);
+      fmtRow.hidden = social();
+      socialNote.hidden = !social();
+      qRow.hidden = social() || S.format === 'image/png';
+      exifBox.hidden = social() || S.format !== 'image/jpeg';
+      let b = await encode(c, fmtNow(), qNow());
       if (my !== token) return;
-      b = await withExif(b, c.width, c.height);
+      if (!social()) b = await withExif(b, c.width, c.height);
       current = b;
       sizeEl.textContent = Core.fmtBytes(b.size);
       dims.textContent = `${c.width}×${c.height} px · ${S.enh.label} · lista en ${Core.fmtTime((performance.now() - t0) / 1000)}`;
@@ -1684,6 +1692,12 @@ async function screenDownload(host) {
       toast(`${Native.on ? 'ZIP guardado en Descargas' : 'ZIP listo'}: ${ids.length} fotos, ${Core.fmtBytes(zip.size)}`);
     } catch (e) { toast(e.message, 'err'); } finally { zipBtn.disabled = false; holder.remove(); }
   });
+  if (S.enhUI && Core.SOCIAL_MODES.has(S.enhUI.mode) && S.enh.mode !== S.enhUI.mode) {
+    sizeEl.textContent = 'Preparando…';
+    await applyEnhance(S.enhUI, prepBox);
+    prepBox.innerHTML = '';
+    if (S.step !== 'descargar') return;
+  }
   estimate();
 }
 
@@ -1726,6 +1740,20 @@ const Native = {
   },
   async save(blob, name) { await this.send(blob, name); return window.Capacitor.Plugins.LumenNativo.save(); },
   async share(blob, name) { await this.send(blob, name); return window.Capacitor.Plugins.LumenNativo.share(); },
+  /* Foto que llega desde Compartir o Editar en la Galería */
+  bindIncoming() {
+    const P = window.Capacitor.Plugins.LumenNativo;
+    if (!P || !P.addListener) return;
+    P.addListener('sharedImage', async (d) => {
+      if (d.error) { toast(d.error, 'err'); return; }
+      if (S.enhBusy) { toast('Espera a que termine la mejora y vuelve a compartir la foto.', 'err'); return; }
+      try {
+        const r = await fetch(window.Capacitor.convertFileSrc(d.path));
+        if (!r.ok) throw new Error('No se pudo leer la foto.');
+        await loadFile(new File([await r.blob()], d.name || 'foto.jpg', { type: d.mime || 'image/jpeg' }));
+      } catch (e) { toast(e.message, 'err'); }
+    });
+  },
   bindBack() {
     const App = window.Capacitor.Plugins.App;
     if (!App) return;
@@ -1762,5 +1790,6 @@ function setTheme(t) { document.documentElement.dataset.theme = t; try { localSt
     if (!Array.isArray(list)) return;
     list.forEach((p) => { S.customs.push(p); S.presets.set(p.id, p); });
   });
+  if (Native.on) Native.bindIncoming();
 })();
 window.__lumen = { rebuildDetail, Native, S, R, Core, ensureLut, renderFinal, paramsFor, go, loadFile, importPreset, aiPool, IDB, chooseEngine };

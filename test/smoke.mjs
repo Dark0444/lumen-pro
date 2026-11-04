@@ -28,12 +28,14 @@ await ctx.addInitScript(() => {
   const log = (window.__native = { name: null, mime: null, size: 0, head: null, saves: 0, shares: 0, exit: 0, back: null, bar: [] });
   window.Capacitor = {
     isNativePlatform: () => true,
+    convertFileSrc: (p) => p,
     Plugins: {
       LumenNativo: {
         begin: async ({ name, mime }) => { log.name = name; log.mime = mime; log.size = 0; log.head = null; },
         chunk: async ({ data }) => { const raw = atob(data); if (log.head === null) log.head = raw.charCodeAt(0).toString(16) + raw.charCodeAt(1).toString(16); log.size += raw.length; },
         save: async () => { log.saves++; return { uri: 'content://prueba' }; },
         share: async () => { log.shares++; },
+        addListener: (type, fn) => { if (type === 'sharedImage') log.incoming = fn; },
       },
       App: { addListener: (type, fn) => { if (type === 'backButton') log.back = fn; }, exitApp: () => { log.exit++; } },
       StatusBar: { hide: async () => log.bar.push('hide'), show: async () => log.bar.push('show'), setBackgroundColor: async () => {}, setStyle: async () => {} },
@@ -93,6 +95,20 @@ await page.waitForSelector('.drop');
 await page.evaluate(() => window.__native.back());
 check('Atrás: en la portada sale de la app', await page.evaluate(() => window.__native.exit === 1));
 check('Sin peticiones a internet', external.filter((u) => !/fonts\.g/.test(u)).length === 0, external.slice(0, 3).join(', '));
+await page.evaluate(async () => {
+  const c = document.createElement('canvas'); c.width = 1200; c.height = 900;
+  const x = c.getContext('2d'); const g = x.createLinearGradient(0, 0, 1200, 900); g.addColorStop(0, '#2a7fd0'); g.addColorStop(1, '#f2c14e'); x.fillStyle = g; x.fillRect(0, 0, 1200, 900);
+  await window.__native.incoming({ path: c.toDataURL('image/png'), name: 'desde-galeria.png', mime: 'image/png' });
+});
+await page.waitForFunction(() => window.__lumen.S.name === 'desde-galeria.png' && document.querySelector('#edCanvas'), null, { timeout: 60000 });
+check('Una foto compartida desde la Galería abre en el editor', true);
+await page.tap('.step:text-is("Calidad")');
+await page.waitForSelector('.opt:has(strong:text-is("WhatsApp y Facebook"))');
+await page.tap('.opt:has(strong:text-is("Foto de perfil"))');
+await page.tap('.step:text-is("Guardar")');
+await page.waitForFunction(() => { const d = document.querySelector('#bDownload'); return d && !d.disabled && window.__lumen.S.enh.mode === 'perfil'; }, null, { timeout: 120000 });
+const social = await page.evaluate(() => ({ fmtHidden: !document.querySelector('#fmt').offsetParent, qualHidden: !document.querySelector('#qual').offsetParent, note: !!document.querySelector('#socialNote').offsetParent, name: document.querySelector('#fname').value, dims: document.querySelector('#estDims').textContent }));
+check('Redes: formato definido y preparación automática', social.fmtHidden && social.qualHidden && social.note && social.name.endsWith('.jpg') && social.dims.startsWith('640×'), JSON.stringify(social));
 check('Sin errores de JavaScript', errors.length === 0, errors.slice(0, 3).join(' | '));
 await browser.close();
 server.close();
