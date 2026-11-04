@@ -421,7 +421,7 @@ class Renderer {
   static mat(m) { return new Float32Array([m[0], m[3], 0, m[1], m[4], 0, m[2], m[5], 1]); }
   /* Pasadas de baja resolución para claridad, textura, neblina y halación */
   updateBlur(job, aspect) {
-    const gl = this.gl, long = job.outW * job.outH < 200000 ? 256 : 1024, low = this.ensureLow(aspect, long), pr = this.shaderFor(job.params);
+    const gl = this.gl, long = job.lowLong || (job.outW * job.outH < 200000 ? 256 : 1024), low = this.ensureLow(aspect, long), pr = this.shaderFor(job.params);
     /* Evita leer y escribir la misma textura en esta pasada */
     for (const unit of [gl.TEXTURE4, gl.TEXTURE5, gl.TEXTURE9]) { gl.activeTexture(unit); gl.bindTexture(gl.TEXTURE_2D, this.white); }
     gl.useProgram(pr.p);

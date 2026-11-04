@@ -54,7 +54,7 @@ sleep 6
 adb shell input tap $(( W / 2 )) "$Y"
 sleep 3
 adb exec-out screencap -p > "$OUT/4-camara-guardando.png"
-sleep 60
+sleep 200
 adb exec-out screencap -p > "$OUT/5-camara-final.png"
 {
   echo "--- Sin respuesta (ANR):"

@@ -172,7 +172,8 @@ function camLoop(my) {
     if (t < (CAM.nextAt || 0)) return;
     if (camRenderFrame()) {
       const cost = performance.now() - t;
-      CAM.nextAt = t + Math.max(30, cost * (CAM.pending ? 4 : 2.5));
+      /* En un teléfono rápido no se frena; solo cede tiempo si cada cuadro cuesta demasiado */
+      CAM.nextAt = cost < 22 ? 0 : t + cost * (CAM.pending ? 3 : 1.8);
     }
   };
   CAM.raf = requestAnimationFrame(step);
@@ -187,7 +188,7 @@ function camRenderFrame() {
   if (!s) return false;
   if (!r.hasLut(CAM.preset) && CAM.preset) { if (!CAM.lutLoading) { CAM.lutLoading = true; lutFor(r, CAM.preset).finally(() => { CAM.lutLoading = false; }); } }
   CAM.lastT = v.currentTime;
-  const dpr = Math.min(2, devicePixelRatio || 1), k = Math.min(1, (s.dw * dpr) / v.videoWidth), W = Math.max(2, Math.round(v.videoWidth * k)), H = Math.max(2, Math.round(v.videoHeight * k));
+  const dpr = Math.min(2, devicePixelRatio || 1), k = Math.min(1, Math.min(s.dw * dpr, 720) / v.videoWidth), W = Math.max(2, Math.round(v.videoWidth * k)), H = Math.max(2, Math.round(v.videoHeight * k));
   /* El video pasa primero por un lienzo: subirlo directo a WebGL salía negro en el WebView de Android */
   const buf = CAM.buf || (CAM.buf = document.createElement('canvas'));
   if (buf.width !== W || buf.height !== H) { buf.width = W; buf.height = H; }
@@ -197,7 +198,7 @@ function camRenderFrame() {
   if (now - CAM.statsAt > 1200) { CAM.statsAt = now; camStats(); }
   const lut = CAM.preset && r.hasLut(CAM.preset) ? r.bindLut(CAM.preset) : null;
   const params = camParams(CAM.preset, CAM.stats, CAM.scene, CAM.soft);
-  r.render({ src: { tex: CAM.tex, w: W, h: H }, lowSrc: { tex: CAM.tex }, params, lut, intensity: CAM.preset ? 100 : 0, outW: W, outH: H, pxW: W, pxH: H, dither: false, maskXf: Core.IDENTITY_XF });
+  r.render({ src: { tex: CAM.tex, w: W, h: H }, lowSrc: { tex: CAM.tex }, params, lut, intensity: CAM.preset ? 100 : 0, outW: W, outH: H, pxW: W, pxH: H, dither: false, lowLong: 384, maskXf: Core.IDENTITY_XF });
   const out = CAM.view2d;
   if (out.width !== W || out.height !== H) { out.width = W; out.height = H; }
   out.getContext('2d', { alpha: false }).drawImage(r.canvas, 0, 0);
@@ -292,7 +293,10 @@ function camHud(main, hint) {
 function selectCamPreset(id, silent) {
   CAM.preset = id;
   lutFor(CAM.r, id);
-  document.querySelectorAll('.cam-thumb').forEach((b) => { const on = (b.dataset.id || null) === id; b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)); if (on) b.scrollIntoView({ block: 'nearest', inline: 'center', behavior: reduced() ? 'auto' : 'smooth' }); });
+  /* Deja listos los vecinos para que deslizar se sienta inmediato */
+  const list = [null, ...CAM.order], at = list.indexOf(id);
+  [1, -1].forEach((d) => { const n = list[at + d]; if (n) setTimeout(() => { lutCube(n).catch(() => {}); }, 60); });
+  document.querySelectorAll('.cam-thumb').forEach((b) => { const on = (b.dataset.id || null) === id; b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)); if (on) b.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'auto' }); });
   if (!silent) camHud(id ? S.presets.get(id).name : 'Sin look');
   CAM.lastT = -1;
 }
@@ -465,10 +469,11 @@ async function captureFrame() {
   if (CAM.ic) {
     try {
       const opts = {};
-      if (pc && pc.imageWidth && pc.imageHeight) {
-        /* Cerca de 12 MP: alcanza para 4K con detalle real y se guarda rápido */
-        const w = Math.min(pc.imageWidth.max, Math.max(pc.imageWidth.min || 0, 4080));
-        opts.imageWidth = w;
+      if (pc && pc.imageWidth && pc.imageHeight && pc.imageWidth.max) {
+        /* La mayor foto normal de la cámara. Desde 6000 px se limita a unos 12 MP para no agotar la memoria. */
+        const mw = pc.imageWidth.max, mh = pc.imageHeight.max, big = Math.max(mw, mh) > 6000, k = big ? 4080 / Math.max(mw, mh) : 1;
+        opts.imageWidth = Math.round(mw * k);
+        opts.imageHeight = Math.round(mh * k);
       }
       if (CAM.flash && CAM.facing === 'environment' && !CAM.caps.torch && pc && pc.fillLightMode && pc.fillLightMode.includes('flash')) opts.fillLightMode = 'flash';
       const blob = await CAM.ic.takePhoto(opts);
@@ -542,14 +547,30 @@ async function processShot(job) {
     } else rnd.setMatte(null);
     const lut = job.preset ? await lutFor(rnd, job.preset) : null;
     const geoXf = Core.geoMatrix(geo, W, H), size = Core.geoOutputSize(geo, W, H);
-    const full = await renderTiles(rnd, { source: bmp, srcXf: geoXf, size, lowTex, lowXf: geoXf, maskXf: geoXf, params, lut, intensity: job.preset ? 100 : 0, atmos: [0.9, 0.9, 0.9], rotated: false });
-    await nextFrame();
+    /* Mismo proceso que Redes sociales: si la cámara entregó menos de 3840 px, se reconstruye el detalle con la IA */
     const t = Core.qualityPlan(size.w, size.h, 'whatsappHd');
-    const rgba = full.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, size.w, size.h).data;
-    const fit = t.kind === 'resize' && t.w < size.w;
-    const w = fit ? t.w : size.w, h = fit ? t.h : size.h;
-    const sized = fit ? await lanczosWorker(rgba, size.w, size.h, w, h) : rgba;
-    const sharp = await sharpenWorker(sized, w, h, 0, 1.6);
+    const w = t.w, h = t.h;
+    let source = bmp, srcXf = geoXf, outSize = size, rebuilt = null, how = 'reescalado';
+    if (t.kind === 'rebuild') {
+      const left = document.createElement('canvas');
+      left.width = size.w; left.height = size.h;
+      const lx = left.getContext('2d');
+      const sx0 = geo.crop.x * W, sy0 = geo.crop.y * H, sw0 = geo.crop.w * W, sh0 = geo.crop.h * H;
+      if (geo.flipH) { lx.translate(size.w, 0); lx.scale(-1, 1); }
+      lx.drawImage(bmp, sx0, sy0, sw0, sh0, 0, 0, size.w, size.h);
+      try {
+        const r = await rebuildDetail(left, t, { cancelled: false }, () => {});
+        rebuilt = await canvasToBitmap(r.rgba, w, h);
+        source = rebuilt; srcXf = Core.IDENTITY_XF; outSize = { w, h }; how = r.label;
+      } catch (e) { camNote(`IA no disponible: ${e.message}`); how = 'reescalado sin IA'; }
+      await nextFrame();
+    }
+    const full = await renderTiles(rnd, { source, srcXf, size: outSize, lowTex, lowXf: geoXf, maskXf: geoXf, params, lut, intensity: job.preset ? 100 : 0, atmos: [0.9, 0.9, 0.9], rotated: false });
+    if (rebuilt) rebuilt.close();
+    await nextFrame();
+    const rgba = full.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, outSize.w, outSize.h).data;
+    const sized = outSize.w !== w ? await lanczosWorker(rgba, outSize.w, outSize.h, w, h) : rgba;
+    const sharp = await sharpenWorker(sized, w, h, t.kind === 'rebuild' ? 0.4 : 0, t.kind === 'rebuild' ? 0 : 1.6);
     const out = document.createElement('canvas');
     out.width = w; out.height = h;
     out.getContext('2d').putImageData(new ImageData(sharp, w, h), 0, 0);
@@ -559,7 +580,8 @@ async function processShot(job) {
     const name = `LUMEN_${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}_${d.getMilliseconds()}_${p ? Core.presetSlug(p.name) : 'sin-look'}.jpg`;
     if (Native.on) await Native.save(blob, name);
     else { const url = URL.createObjectURL(blob), link = el('a', { href: url, download: name, style: 'display:none' }); document.body.append(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 60000); }
-    CAM.lastBlob = blob; CAM.lastName = name; CAM.lastInfo = `${w}x${h} de ${W}x${H}, ${Math.round(blob.size / 1024)} KB`;
+    CAM.lastBlob = blob; CAM.lastName = name; CAM.lastInfo = `${w}x${h} de ${W}x${H}, ${Math.round(blob.size / 1024)} KB, ${how}`;
+    camHud('Guardada', `${w}×${h} px, ${Core.fmtBytes(blob.size)}. La cámara dio ${W}×${H}.`);
   } finally {
     bmp.close();
     rnd.gl.deleteTexture(lowTex);
