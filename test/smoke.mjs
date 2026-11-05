@@ -146,7 +146,7 @@ const rawBefore = await page.evaluate(() => window.__native.saves);
 await page.tap('#camShutter');
 await page.waitForFunction((n) => window.__native.saves === n + 1, rawBefore, { timeout: 60000 });
 const raw = await page.evaluate(() => ({ name: window.__native.name, head: window.__native.head, info: window.__lumen.CAM.lastInfo, preset: window.__lumen.CAM.preset, ratio: document.getElementById('camRatio').hidden }));
-check('Cámara Normal: guarda el original sin procesar', /_normal\.jpg$/.test(raw.name) && raw.head === 'ffd8' && raw.preset === null && raw.ratio && /original/.test(raw.info), JSON.stringify(raw));
+check('Cámara Normal: guarda el original sin procesar', ((/_normal\.jpg$/.test(raw.name) && raw.head === 'ffd8') || (/_normal\.png$/.test(raw.name) && raw.head === '8950')) && raw.preset === null && raw.ratio && /original/.test(raw.info), JSON.stringify(raw));
 await page.evaluate(() => {
   const view = document.getElementById('camView'), b = view.getBoundingClientRect(), y = b.top + b.height / 2, x = b.left + b.width * 0.7;
   const fire = (type, cx) => view.dispatchEvent(new PointerEvent(type, { bubbles: true, pointerId: 9, pointerType: 'touch', clientX: cx, clientY: y, isPrimary: true }));

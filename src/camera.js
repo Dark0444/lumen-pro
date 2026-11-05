@@ -495,13 +495,13 @@ async function processShot(job) {
   const d = new Date(job.t), pad = (v) => String(v).padStart(2, '0');
   const stamp = `LUMEN_${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}_${d.getMilliseconds()}`;
   if (job.raw && job.source instanceof Blob) {
-    const blob = job.source, name = `${stamp}_normal.jpg`;
+    const blob = job.source, name = `${stamp}_normal.${/png/.test(blob.type) ? 'png' : 'jpg'}`;
     job.source = null;
-    if (Native.on) await Native.save(blob, name);
-    else { const url = URL.createObjectURL(blob), link = el('a', { href: url, download: name, style: 'display:none' }); document.body.append(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 60000); }
     let size = '';
     try { const b = await createImageBitmap(blob); size = `${b.width}×${b.height} px, `; b.close(); } catch { /* no impide guardar */ }
     CAM.lastBlob = blob; CAM.lastName = name; CAM.lastInfo = `${size.replace('×', 'x').replace(' px, ', '')} original, ${Math.round(blob.size / 1024)} KB`;
+    if (Native.on) await Native.save(blob, name);
+    else { const url = URL.createObjectURL(blob), link = el('a', { href: url, download: name, style: 'display:none' }); document.body.append(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 60000); }
     camHud('Guardada sin cambios', `${size}${Core.fmtBytes(blob.size)}`);
     return;
   }
@@ -602,7 +602,7 @@ async function processShot(job) {
 }
 function openLastShot() {
   if (!CAM.lastBlob) { const i = $('#camPick'); if (i) i.click(); return; }
-  const f = new File([CAM.lastBlob], CAM.lastName, { type: 'image/jpeg' });
+  const f = new File([CAM.lastBlob], CAM.lastName, { type: CAM.lastBlob.type || 'image/jpeg' });
   stopCamera();
   loadFile(f);
 }
