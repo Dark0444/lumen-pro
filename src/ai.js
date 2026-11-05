@@ -47,6 +47,9 @@ function workerBody() {
       } else if (m.type === 'sharpen') {
         const out = m.edge ? Core.edgeSharpen(m.rgba, m.w, m.h, m.edge) : Core.casSharpen(m.rgba, m.w, m.h, m.amount);
         reply(m.id, { rgba: out }, [out.buffer]);
+      } else if (m.type === 'clean') {
+        const out = Core.cleanChroma(m.rgba, m.w, m.h, m.strength);
+        reply(m.id, { rgba: out }, [out.buffer]);
       } else if (m.type === 'matte') {
         const out = Core.proMatte(m.rgba, m.w, m.h, m.seg, m.seg2, m.box);
         reply(m.id, out, out.data ? [out.data.buffer] : []);
@@ -140,6 +143,7 @@ const sharpenWorker = async (rgba, w, h, amount, edge) => {
   const copy = new Uint8ClampedArray(rgba);
   return (await classicPool.call({ type: 'sharpen', rgba: copy, w, h, amount, edge }, [copy.buffer])).rgba;
 };
+const cleanWorker = async (rgba, w, h, strength) => (await classicPool.call({ type: 'clean', rgba, w, h, strength }, [rgba.buffer])).rgba;
 const matteWorker = async (rgba, w, h, seg, seg2, box) => classicPool.call({ type: 'matte', rgba, w, h, seg, seg2, box }, [rgba.buffer]);
 const fuseWorker = async (ai, base, mix) => {
   const a = new Uint8ClampedArray(ai), b = new Uint8ClampedArray(base);

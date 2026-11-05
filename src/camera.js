@@ -1,7 +1,7 @@
 /* LUMEN PRO · cámara: presets en vivo y guardado en segundo plano, sin detener las tomas */
 const CAM = {
   on: false, r: null, q: null, stream: null, track: null, ic: null, video: null, tex: null, caps: {}, photoCaps: null,
-  facing: 'environment', preset: 'portada', ratio: '3:4', timer: 0, grid: false, pro: false, flash: false, ev: 0, zoom: 1, soft: 0,
+  facing: 'environment', preset: null, ratio: '3:4', timer: 0, grid: false, pro: false, flash: false, ev: 0, zoom: 1, soft: 0,
   devices: [], deviceI: -1, stats: null, scene: null, statsAt: 0, pending: 0, saved: 0, queue: [], pumping: false, lastBlob: null, lastName: '', order: [], busy: false, shooting: false, raf: 0, token: 0,
 };
 const CAM_RATIOS = { '3:4': 0.75, '4:5': 0.8, '1:1': 1, '9:16': 0.5625 };
@@ -61,7 +61,8 @@ function screenCamera(host) {
     el('button', { class: 'cam-tool txt', id: 'camTimer', 'aria-label': 'Temporizador', onclick: () => { CAM.timer = CAM.timer === 0 ? 3 : CAM.timer === 3 ? 10 : 0; paintCamTools(); } }),
     el('button', { class: 'cam-tool txt', id: 'camRatio', 'aria-label': 'Formato', onclick: () => { const k = Object.keys(CAM_RATIOS); CAM.ratio = k[(k.indexOf(CAM.ratio) + 1) % k.length]; paintCamTools(); layoutCam(); } }),
     el('button', { class: 'cam-tool', id: 'camGridBtn', html: I.grid, 'aria-label': 'Cuadrícula', onclick: () => { CAM.grid = !CAM.grid; $('#camGrid').hidden = !CAM.grid; paintCamTools(); } }),
-    el('button', { class: 'cam-tool txt', id: 'camPro', 'aria-label': 'Modo Pro al guardar', onclick: () => { CAM.pro = !CAM.pro; paintCamTools(); camHud(CAM.pro ? 'Modo Pro activado' : 'Modo Pro desactivado', CAM.pro ? 'Se aplica al guardar la foto' : ''); } }, 'Pro'));
+    el('button', { class: 'cam-tool txt', id: 'camSamsung', 'aria-label': 'Abrir la cámara de Samsung', hidden: !Native.on, onclick: openPhoneCamera }, 'Samsung'),
+    el('button', { class: 'cam-tool txt', id: 'camPro', 'aria-label': 'Modo Pro al guardar', onclick: () => { CAM.pro = !CAM.pro; paintCamTools(); layoutCam(); camHud(CAM.pro ? 'Modo Pro activado' : 'Modo Pro desactivado', CAM.pro ? 'Se aplica al guardar la foto' : ''); } }, 'Pro'));
   const zooms = el('div', { class: 'cam-zooms', id: 'camZooms' });
   const last = el('button', { class: 'cam-last', id: 'camLast', 'aria-label': 'Ver tus fotos', onclick: openLastShot }, el('canvas', { id: 'camLastC', width: 112, height: 112 }), el('span', { id: 'camPending', hidden: true }));
   const pick = el('input', { type: 'file', id: 'camPick', accept: 'image/*,.heic,.heif', hidden: true, onchange: (e) => { const f = e.target.files[0]; if (f) { stopCamera(); loadFile(f); } } });
@@ -156,7 +157,7 @@ function layoutCam() {
   if (!cv) return;
   cv.style.cssText = `position:absolute;left:${s.x}px;top:${s.y}px;width:${s.dw}px;height:${s.dh}px;transform:${CAM.facing === 'user' ? 'scaleX(-1)' : 'none'}`;
   const f = $('#camFrame');
-  const r = s.a < 1 ? CAM_RATIOS[CAM.ratio] : 1 / CAM_RATIOS[CAM.ratio];
+  const r = camRaw() ? s.a : s.a < 1 ? CAM_RATIOS[CAM.ratio] : 1 / CAM_RATIOS[CAM.ratio];
   let fw = s.dw, fh = fw / r;
   if (fh > s.dh) { fh = s.dh; fw = fh * r; }
   f.style.cssText = `left:${s.x + (s.dw - fw) / 2}px;top:${s.y + (s.dh - fh) / 2}px;width:${fw}px;height:${fh}px`;
@@ -226,11 +227,17 @@ function camStats() {
 }
 
 /* ---------- Herramientas ---------- */
+/* Normal: guarda el archivo de la cámara tal cual, sin look, recorte ni conversión */
+const camRaw = () => !CAM.preset && !CAM.pro;
+async function openPhoneCamera() {
+  try { await window.Capacitor.Plugins.LumenNativo.openPhoneCamera(); } catch { toast('No se pudo abrir la cámara del teléfono.', 'err'); }
+}
 function paintCamTools() {
   const t = $('#camTimer'); if (!t) return;
   t.textContent = CAM.timer ? `${CAM.timer} s` : 'Tiempo';
   t.classList.toggle('on', !!CAM.timer);
   $('#camRatio').textContent = CAM.ratio;
+  $('#camRatio').hidden = camRaw();
   $('#camGridBtn').classList.toggle('on', CAM.grid);
   $('#camPro').classList.toggle('on', CAM.pro);
   const fl = $('#camFlash'), front = CAM.facing === 'user';
@@ -265,6 +272,7 @@ function setCamZoom(v) {
 }
 function setCamEv(v) {
   const c = CAM.caps.exposureCompensation;
+  if (!c && camRaw()) return;
   CAM.ev = Core.clamp(v, -2, 2);
   if (c && CAM.track) { CAM.soft = 0; CAM.track.applyConstraints({ advanced: [{ exposureMode: 'continuous', exposureCompensation: Core.clamp(CAM.ev, c.min, c.max) }] }).catch(() => {}); } else CAM.soft = CAM.ev;
 }
@@ -293,7 +301,9 @@ function camHud(main, hint) {
 /* Solo se procesa el preset activo. El anterior sigue en pantalla hasta que el nuevo esté listo, sin parpadeo. */
 function selectCamPreset(id) {
   CAM.preset = id;
-  camHud(id ? S.presets.get(id).name : 'Sin look');
+  camHud(id ? S.presets.get(id).name : 'Normal', id ? '' : 'Sin filtro, en toda la resolución');
+  paintCamTools();
+  layoutCam();
   const list = [null, ...CAM.order], at = list.indexOf(id);
   lutFor(CAM.r, id).then(() => {
     if (CAM.preset !== id) return;
@@ -396,7 +406,7 @@ async function shoot() {
 }
 async function grabShot() {
   if (!CAM.stream || !CAM.video) return;
-  const facing = CAM.facing, job = { preset: CAM.preset, ratio: CAM.ratio, pro: CAM.pro, mirror: facing === 'user', soft: CAM.soft, t: Date.now() };
+  const facing = CAM.facing, job = { preset: CAM.preset, ratio: CAM.ratio, pro: CAM.pro, mirror: facing === 'user', soft: CAM.soft, raw: camRaw(), t: Date.now() };
   CAM.pending++;
   paintPending();
   haptic();
@@ -411,7 +421,7 @@ async function grabShot() {
   const screenFlash = facing === 'user' && CAM.flash;
   if (screenFlash) { view.classList.add('white'); await wait(280); } else if (!reduced()) { view.classList.remove('shot'); void view.offsetWidth; view.classList.add('shot'); }
   try {
-    job.source = await captureFrame();
+    job.source = await captureFrame(job.raw);
   } catch (e) {
     CAM.pending--; paintPending();
     camNote(`error al capturar: ${e.message}`);
@@ -421,14 +431,14 @@ async function grabShot() {
   CAM.queue.push(job);
   pumpShots();
 }
-async function captureFrame() {
+async function captureFrame(full) {
   const pc = CAM.photoCaps;
   if (CAM.ic) {
     try {
       const opts = {};
       if (pc && pc.imageWidth && pc.imageHeight && pc.imageWidth.max) {
         /* La mayor foto normal de la cámara. Desde 6000 px se limita a unos 12 MP para no agotar la memoria. */
-        const mw = pc.imageWidth.max, mh = pc.imageHeight.max, big = Math.max(mw, mh) > 6000, k = big ? 4080 / Math.max(mw, mh) : 1;
+        const mw = pc.imageWidth.max, mh = pc.imageHeight.max, big = !full && Math.max(mw, mh) > 6000, k = big ? 4080 / Math.max(mw, mh) : 1;
         opts.imageWidth = Math.round(mw * k);
         opts.imageHeight = Math.round(mh * k);
       }
@@ -482,16 +492,52 @@ async function pumpShots() {
 }
 /* Procesa en su propio contexto gráfico para que la vista en vivo no se detenga */
 async function processShot(job) {
+  const d = new Date(job.t), pad = (v) => String(v).padStart(2, '0');
+  const stamp = `LUMEN_${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}_${d.getMilliseconds()}`;
+  if (job.raw && job.source instanceof Blob) {
+    const blob = job.source, name = `${stamp}_normal.jpg`;
+    job.source = null;
+    if (Native.on) await Native.save(blob, name);
+    else { const url = URL.createObjectURL(blob), link = el('a', { href: url, download: name, style: 'display:none' }); document.body.append(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 60000); }
+    let size = '';
+    try { const b = await createImageBitmap(blob); size = `${b.width}×${b.height} px, `; b.close(); } catch { /* no impide guardar */ }
+    CAM.lastBlob = blob; CAM.lastName = name; CAM.lastInfo = `${size.replace('×', 'x').replace(' px, ', '')} original, ${Math.round(blob.size / 1024)} KB`;
+    camHud('Guardada sin cambios', `${size}${Core.fmtBytes(blob.size)}`);
+    return;
+  }
   const rnd = CAM.q || (CAM.q = new Renderer());
   const opts = { premultiplyAlpha: 'none', imageOrientation: 'from-image' };
   let bmp;
   if (job.source instanceof Blob) { try { bmp = await createImageBitmap(job.source, opts); } catch { bmp = await createImageBitmap(job.source, { premultiplyAlpha: 'none' }); } } else bmp = await createImageBitmap(job.source);
   job.source = null;
   await nextFrame();
-  const W = bmp.width, H = bmp.height, preview = scaleCanvas(bmp, W, H, 1600);
+  const W = bmp.width, H = bmp.height;
+  /* Si la foto trae ruido, limpia el color antes del look. Normal nunca pasa por aquí. */
+  const nc = document.createElement('canvas'), ns = Math.min(768, W, H);
+  nc.width = nc.height = ns;
+  const nx = nc.getContext('2d', { willReadFrequently: true });
+  nx.drawImage(bmp, (W - ns) >> 1, (H - ns) >> 1, ns, ns, 0, 0, ns, ns);
+  const nd = nx.getImageData(0, 0, ns, ns).data;
+  let meanY = 0;
+  for (let i = 1; i < nd.length; i += 4 * 8) meanY += nd[i];
+  meanY = meanY / (nd.length / (4 * 8)) / 255;
+  /* En lo oscuro el mismo ruido se nota más: el umbral baja y siempre hay una limpieza mínima */
+  const noise = Core.noiseScore(nd, ns, ns), dirt = Math.max(Core.clamp((noise - (0.6 + 2.4 * meanY)) / 2.4), meanY < 0.2 ? 0.35 : 0);
+  if (dirt > 0.05) {
+    const fc = document.createElement('canvas');
+    fc.width = W; fc.height = H;
+    const fx = fc.getContext('2d', { willReadFrequently: true });
+    fx.drawImage(bmp, 0, 0);
+    const clean = await cleanWorker(new Uint8ClampedArray(fx.getImageData(0, 0, W, H).data), W, H, 0.5 + dirt * 0.5);
+    bmp.close();
+    bmp = await canvasToBitmap(clean, W, H);
+  }
+  await nextFrame();
+  const preview = scaleCanvas(bmp, W, H, 1600);
   const sampleC = scaleCanvas(preview, preview.width, preview.height, 256), sx = sampleC.getContext('2d', { willReadFrequently: true });
   const stats = Core.analyzePixels(sx.getImageData(0, 0, sampleC.width, sampleC.height).data, sampleC.width, sampleC.height), scene = Core.classifyScene(stats);
   const params = camParams(job.preset, stats, scene, job.soft);
+  if (dirt > 0.05) params.detail.denoise = Math.max(params.detail.denoise, Math.round(dirt * 42));
   await nextFrame();
   const lowTex = rnd.uploadImage(preview);
   const geo = Core.defaultParams().geo;
@@ -537,17 +583,17 @@ async function processShot(job) {
     await nextFrame();
     const rgba = full.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, outSize.w, outSize.h).data;
     const sized = outSize.w !== w ? await lanczosWorker(rgba, outSize.w, outSize.h, w, h) : rgba;
-    const sharp = await sharpenWorker(sized, w, h, t.kind === 'rebuild' ? 0.4 : 0, t.kind === 'rebuild' ? 0 : 1.6);
+    const sharp = await sharpenWorker(sized, w, h, t.kind === 'rebuild' ? 0.4 * (1 - dirt * 0.7) : 0, t.kind === 'rebuild' ? 0 : 1.6 * (1 - dirt * 0.65));
     const out = document.createElement('canvas');
     out.width = w; out.height = h;
     out.getContext('2d').putImageData(new ImageData(sharp, w, h), 0, 0);
     await nextFrame();
     const blob = await encode(out, 'image/jpeg', 0.96);
-    const p = job.preset ? S.presets.get(job.preset) : null, d = new Date(job.t), pad = (v) => String(v).padStart(2, '0');
-    const name = `LUMEN_${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}_${d.getMilliseconds()}_${p ? Core.presetSlug(p.name) : 'sin-look'}.jpg`;
+    const p = job.preset ? S.presets.get(job.preset) : null;
+    const name = `${stamp}_${p ? Core.presetSlug(p.name) : 'normal'}.jpg`;
     if (Native.on) await Native.save(blob, name);
     else { const url = URL.createObjectURL(blob), link = el('a', { href: url, download: name, style: 'display:none' }); document.body.append(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 60000); }
-    CAM.lastBlob = blob; CAM.lastName = name; CAM.lastInfo = `${w}x${h} de ${W}x${H}, ${Math.round(blob.size / 1024)} KB, ${how}`;
+    CAM.lastBlob = blob; CAM.lastName = name; CAM.lastInfo = `${w}x${h} de ${W}x${H}, ${Math.round(blob.size / 1024)} KB, ${how}, ruido ${noise.toFixed(1)}`;
     camHud('Guardada', `${w}×${h} px, ${Core.fmtBytes(blob.size)}. La cámara dio ${W}×${H}.`);
   } finally {
     bmp.close();

@@ -221,6 +221,17 @@ public class LumenNativoPlugin extends Plugin {
         }
     }
 
+    /* Abre la cámara del teléfono con todos sus modos */
+    @PluginMethod
+    public void openPhoneCamera(PluginCall call) {
+        try {
+            getActivity().startActivity(new Intent(MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA));
+            call.resolve();
+        } catch (ActivityNotFoundException e) {
+            call.reject(e.getMessage());
+        }
+    }
+
     /* Abre directo la app elegida. Si no está instalada, muestra la lista de apps. */
     @PluginMethod
     public void shareTo(PluginCall call) {

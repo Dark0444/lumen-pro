@@ -126,8 +126,10 @@ const Core = (() => {
     const add = (o, k, v) => { o[k] = Math.round(((o[k] || 0) + v) * 100) / 100; };
     const night = scene && scene.id === 'noche', portrait = scene && scene.id === 'retrato', land = scene && scene.id === 'paisaje';
     const target = night ? Math.min(r.target || 0.46, 0.46) : r.target || 0.54;
+    /* Con poca luz no se fuerza: aclarar de más levanta el ruido y quema las luces artificiales */
+    const lowLight = night || s.dark > 0.18 || (s.p10 < 0.04 && s.p50 < 0.5);
     const room = s.clipHi > 0.04 ? 0.35 : 1;
-    const ev = clamp(Math.log2(srgb2lin(target) / Math.max(srgb2lin(s.p50), 0.004)) * 0.72 * room, 0, night ? 1 : 1.5);
+    const ev = clamp(Math.log2(srgb2lin(target) / Math.max(srgb2lin(s.p50), 0.004)) * 0.72 * room, 0, lowLight ? 0.45 : 1.5);
     add(light, 'exposure', Math.round(ev * 100) / 100);
     if (s.p10 < 0.14) add(light, 'shadows', clamp((0.16 - s.p10) * 170, 0, 30));
     if (s.p99 > 0.965 || s.clipHi > 0.01) add(light, 'highlights', -clamp(8 + s.clipHi * 320, 0, 34));
@@ -141,6 +143,15 @@ const Core = (() => {
     if (portrait) { detail.clarity = Math.min(detail.clarity || 0, 5); add(color, 'vibrance', -2); }
     if (land) { add(detail, 'clarity', 4); if (s.p1 > 0.05) add(detail, 'dehaze', 6); }
     if (night) add(detail, 'denoise', 8);
+    if (lowLight) {
+      light.contrast = Math.round((light.contrast || 0) * 0.5);
+      light.shadows = Math.min(light.shadows || 0, 10);
+      add(light, 'highlights', -14);
+      color.vibrance = Math.round((color.vibrance || 0) * 0.3);
+      color.temp = 0;
+      detail.clarity = 0; detail.dehaze = 0;
+      if (typeof r.lut === 'number') r.lut = Math.round(r.lut * 75) / 100;
+    }
     delete r.target; delete r.scenes;
     return r;
   }
@@ -413,6 +424,49 @@ const Core = (() => {
     const faceEv = clamp(Math.log2(lin(0.6) / Math.max(lin(faceY), 0.002)) * 0.5, 0, 0.6);
     const feetSeen = (bottom + 1) / h < 0.985;
     return { person: true, data, w, h, feet: feetSeen ? (bottom + 1) / h : -1, personH: (bottom + 1 - top) / h, subjEv, faceEv, share: area / n, others: main.removed };
+  }
+  /* Ruido de la cámara: mide la variación fina en las zonas sin bordes */
+  function noiseScore(rgba, w, h) {
+    const v = [];
+    for (let y = 2; y < h - 2; y += 2) for (let x = 2; x < w - 2; x += 2) {
+      const k = (y * w + x) * 4, g = rgba[k + 1], l = rgba[k - 3], r = rgba[k + 5], u = rgba[k - w * 4 + 1], d = rgba[k + w * 4 + 1];
+      const lap = Math.abs(4 * g - l - r - u - d);
+      if (lap < 48) v.push(lap / 4);
+    }
+    if (!v.length) return 0;
+    v.sort((a, b) => a - b);
+    return v[(v.length * 0.6) | 0];
+  }
+  /* Quita el ruido de color, lo que más afea una foto de noche, y conserva la luz y los bordes */
+  function cleanChroma(rgba, w, h, strength) {
+    const sw = Math.max(1, w >> 1), sh = Math.max(1, h >> 1), n = sw * sh, Y = new Float32Array(n), Cb = new Float32Array(n), Cr = new Float32Array(n);
+    for (let y = 0; y < sh; y++) for (let x = 0; x < sw; x++) {
+      let r = 0, g = 0, b = 0;
+      for (let dy = 0; dy < 2; dy++) for (let dx = 0; dx < 2; dx++) {
+        const k = (Math.min(h - 1, y * 2 + dy) * w + Math.min(w - 1, x * 2 + dx)) * 4;
+        r += rgba[k]; g += rgba[k + 1]; b += rgba[k + 2];
+      }
+      r /= 1020; g /= 1020; b /= 1020;
+      const i = y * sw + x, l = 0.299 * r + 0.587 * g + 0.114 * b;
+      Y[i] = l; Cb[i] = b - l; Cr[i] = r - l;
+    }
+    const rad = Math.max(3, Math.round(Math.max(sw, sh) / 300));
+    const fb = guidedFilter(Y, Cb, sw, sh, rad, 0.004), fr = guidedFilter(Y, Cr, sw, sh, rad, 0.004);
+    const out = new Uint8ClampedArray(rgba.length);
+    const k = clamp(strength);
+    for (let y = 0; y < h; y++) {
+      const fy = (y / 2) - 0.25, y0 = clamp(Math.floor(fy), 0, sh - 1), y1 = Math.min(sh - 1, y0 + 1), ty = clamp(fy - y0);
+      for (let x = 0; x < w; x++) {
+        const fx = (x / 2) - 0.25, x0 = clamp(Math.floor(fx), 0, sw - 1), x1 = Math.min(sw - 1, x0 + 1), tx = clamp(fx - x0), a = y0 * sw, b2 = y1 * sw;
+        const cb = (fb[a + x0] * (1 - tx) + fb[a + x1] * tx) * (1 - ty) + (fb[b2 + x0] * (1 - tx) + fb[b2 + x1] * tx) * ty;
+        const cr = (fr[a + x0] * (1 - tx) + fr[a + x1] * tx) * (1 - ty) + (fr[b2 + x0] * (1 - tx) + fr[b2 + x1] * tx) * ty;
+        const p = (y * w + x) * 4, R = rgba[p] / 255, G = rgba[p + 1] / 255, B = rgba[p + 2] / 255, l = 0.299 * R + 0.587 * G + 0.114 * B;
+        const ncr = (R - l) + (cr - (R - l)) * k, ncb = (B - l) + (cb - (B - l)) * k;
+        const nr = l + ncr, nb = l + ncb, ng = (l - 0.299 * nr - 0.114 * nb) / 0.587;
+        out[p] = nr * 255; out[p + 1] = ng * 255; out[p + 2] = nb * 255; out[p + 3] = rgba[p + 3];
+      }
+    }
+    return out;
   }
   /* Une la reconstrucción con el detalle real para que no se vea pintada. */
   function fuseImages(ai, base, mix) {
@@ -1119,7 +1173,7 @@ const Core = (() => {
   const fmtTime = (s) => { if (!Number.isFinite(s)) return '—'; if (s < 60) return `${Math.max(1, Math.round(s))} s`; const m = Math.floor(s / 60); return m >= 60 ? `${Math.floor(m / 60)} h ${m % 60} min` : `${m} min ${Math.round(s % 60)} s`; };
 
   return {
-    clamp, lerp, clone, defaultParams, colorIsIdentity, effectiveParams, autoAdjust, smartRecipe, diagnose, casSharpen, edgeSharpen, proMatte, segmentBox, fuseImages, qualityPlan, geoIsIdentity, targetDims, frameSize, geoOutputSize, geoMatrix, IDENTITY_XF, applyXf, curveToTable,
+    clamp, lerp, clone, defaultParams, colorIsIdentity, effectiveParams, autoAdjust, smartRecipe, diagnose, casSharpen, edgeSharpen, noiseScore, cleanChroma, proMatte, segmentBox, fuseImages, qualityPlan, geoIsIdentity, targetDims, frameSize, geoOutputSize, geoMatrix, IDENTITY_XF, applyXf, curveToTable,
     haldToCube, parseCube, lutTetra, parseXmp, lanczosKernel, lanczosRegion, lanczosResize, planTiles, destRegion, blendTile, resolveAccum,
     analyzePixels, classifyScene, rankPresets, computeSkinMask, computeSkyMask, rgbToHsv, readExif, findApp1, prepareExif, insertApp1, crc32, makeZip,
     SOCIAL_MODES, slugify, presetSlug, exportName, fmtBytes, fmtTime, CAT_LABEL, sectionIsDefault,

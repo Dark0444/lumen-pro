@@ -319,6 +319,28 @@ test('looks a tu foto: aclaran lo oscuro y nunca oscurecen', () => {
   assert.ok(Core.smartRecipe(base, { ...st, chroma: 0.4 }, { id: 'general' }).color.vibrance < 10);
   assert.equal(base.target, 0.56);
 });
+test('noche: no fuerza la luz y limpia el ruido de color sin mover la luz', () => {
+  const base = { lut: 0.4, light: { contrast: 20 }, color: { vibrance: 20, temp: 4 }, detail: { clarity: 10 }, target: 0.55, scenes: [] };
+  const st = { p50: 0.25, p10: 0.02, p1: 0, p99: 0.99, clipHi: 0.02, std: 0.3, chroma: 0.2, dark: 0.3, cast: 'neutra', cct: 5500 };
+  const r = Core.smartRecipe(base, st, { id: 'general' });
+  assert.ok(r.light.exposure <= 0.45);
+  assert.ok(r.color.vibrance <= 6);
+  assert.equal(r.detail.clarity, 0);
+  assert.ok(r.lut < 0.4);
+  const W = 120, H = 90, a = new Uint8ClampedArray(W * H * 4), b = new Uint8ClampedArray(W * H * 4);
+  let seed = 7;
+  const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+  for (let i = 0; i < W * H; i++) {
+    const k = i * 4, nr = (rnd() - 0.5) * 50, nb = (rnd() - 0.5) * 50;
+    a[k] = 90; a[k + 1] = 90; a[k + 2] = 90; a[k + 3] = 255;
+    b[k] = 90 + nr; b[k + 1] = 90 + (rnd() - 0.5) * 10; b[k + 2] = 90 + nb; b[k + 3] = 255;
+  }
+  assert.ok(Core.noiseScore(b, W, H) > Core.noiseScore(a, W, H));
+  const c = Core.cleanChroma(b, W, H, 1);
+  const spread = (d) => { let s = 0; for (let i = 0; i < W * H; i++) s += Math.abs(d[i * 4] - d[i * 4 + 1]) + Math.abs(d[i * 4 + 2] - d[i * 4 + 1]); return s / (W * H); };
+  assert.ok(spread(c) < spread(b) * 0.5);
+  assert.equal(c[3], 255);
+});
 test('nombre de archivo automático', () => {
   assert.equal(Core.exportName('Foto Playa.JPG', 'Kodak Portra 400', '4k', 'jpg'), 'foto-playa_portra400_4k.jpg');
   assert.equal(Core.exportName('', null, 'original', 'png'), 'foto_sin-preset_original.png');
